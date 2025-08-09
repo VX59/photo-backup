@@ -1,1 +1,3 @@
-/target
+/photo-client/target/*
+/photo-server/target/*
+/*/storage*
