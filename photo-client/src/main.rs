@@ -32,14 +32,8 @@ fn main() -> std::io::Result<()> {
                     for path in new_event.paths {
                         write_image(path, &mut stream)?;
                     }
-                        let buffer: &mut [u8; 1024] = &mut [0; 1024];
-                        stream.read(buffer)
-                            .expect("Failed to read from stream");
-                        println!("Received from server: {}", buffer.iter()
-                            .take_while(|&&x| x != 0)
-                            .map(|&x| x as char)
-                            .collect::<String>());
                 }
+
             },
             Err(e) => eprintln!("Watch error: {:?}", e),
         }
@@ -63,8 +57,15 @@ fn write_image(path:PathBuf, stream:&mut TcpStream) -> std::io::Result<()> {
     let image = ImageReader::open(path.clone())?.decode().expect("unable to decode image");
     let mut image_bytes: Vec<u8> = Vec::new();
 
-    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg).expect("failed to write image to buffer");
-
+    if file_ext == "png" {
+        image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Png)
+            .expect("Failed to write PNG image");
+    } else if file_ext == "jpg" || file_ext == "jpeg" {
+        image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
+            .expect("Failed to write JPEG image");
+    } else {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported image format"));
+    }
 
     let file_header = FileHeader {
         file_name: file_name.to_string(), 

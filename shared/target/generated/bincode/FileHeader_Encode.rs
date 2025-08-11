@@ -1,1 +1,12 @@
-impl :: bincode :: Encode for FileHeader {fn encode < __E : :: bincode :: enc :: Encoder > (& self , encoder : & mut __E) ->core :: result :: Result < () , :: bincode :: error :: EncodeError > {:: bincode :: Encode :: encode (& self . file_name , encoder) ?; :: bincode :: Encode :: encode (& self . file_size , encoder) ?; :: bincode :: Encode :: encode (& self . file_ext , encoder) ?; core :: result :: Result :: Ok (())}}
+impl :: bincode :: Encode for FileHeader
+{
+    fn encode < __E : :: bincode :: enc :: Encoder >
+    (& self, encoder : & mut __E) ->core :: result :: Result < (), :: bincode
+    :: error :: EncodeError >
+    {
+        :: bincode :: Encode :: encode(&self.file_name, encoder) ?; :: bincode
+        :: Encode :: encode(&self.file_size, encoder) ?; :: bincode :: Encode
+        :: encode(&self.file_ext, encoder) ?; core :: result :: Result ::
+        Ok(())
+    }
+}
