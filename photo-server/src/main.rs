@@ -6,7 +6,7 @@ use::bincode::{config};
 use::shared::FileHeader;
 
 fn main() {
-    let listener = TcpListener::bind("jacob-ubuntu:8080").expect("Failed to bind to address");
+    let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind to address");
     println!("Server is running on jacob-ubuntu:8080");
 
     for stream in listener.incoming() {
@@ -18,16 +18,24 @@ fn main() {
 }
 
  fn handle_connection(mut stream: TcpStream) {
-    let mut reader = BufReader::new(&stream);
     
-    
-    handle_image_upload(&mut reader);
+    loop {
+        let mut reader = BufReader::new(&stream);
 
-    let response = "HTTP/1.1 200 OK\r\n\r\n successfully uploaded images!";
-    stream.write_all(response.as_bytes()).expect("Failed to write to stream");
+        match handle_image_upload(&mut reader) {
+            Ok(_) => {
+                let response = "HTTP/1.1 200 OK\r\n\r\n successfully uploaded image!";
+                stream.write_all(response.as_bytes()).expect("Failed to write to stream");
+            }
+            Err(e) => {
+                println!("Connection closed or error: {:?}", e);
+                break;
+            }
+        }
+    }
  }
 
- fn handle_image_upload(reader:&mut BufReader<&TcpStream>) {
+ fn handle_image_upload(reader:&mut BufReader<&TcpStream>) ->std::io::Result<()> {
     let mut header_length_buffer = [0u8; 4];
     // Read the request line
 
@@ -48,4 +56,6 @@ fn main() {
     let image = image::load_from_memory(&image_bytes).expect("failed to decode image");
     image.save(format!("./storage-server/{}", file_header.file_name))
         .expect("Failed to save image");
+
+    Ok(())
  }
