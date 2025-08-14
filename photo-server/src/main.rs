@@ -5,9 +5,13 @@ use std::{
 use::bincode::{config};
 use::shared::FileHeader;
 use shared::Response;
+use hostname::get;
 
 fn main() {
     let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind to address");
+    let name = get().unwrap_or_default().to_string_lossy().to_string();
+
+    println!("Photo server '{}' listening on port 8080", name);
 
     for stream in listener.incoming() {
         let mut stream = stream.expect("Failed to accept connection");
@@ -16,7 +20,7 @@ fn main() {
         let response = Response {
             status_code: 200,
             status_message: "OK".to_string(),
-            body: b"connected to photo server @ jacob-ubuntu:8080".to_vec(),
+            body: format!("connected to photo server @ {}", name).as_bytes().to_vec(),
         };
 
         stream.write_all(response.body.as_slice()).expect("Failed to write to stream");
@@ -28,10 +32,10 @@ fn main() {
 fn image_upload_handler(mut stream: TcpStream){
     loop {
         let mut reader = BufReader::new(&stream);
-
-        match handle_image_upload(&mut reader) {
-            Ok(_) => {
-                let response = "HTTP/1.1 200 OK\r\n\r\n successfully uploaded image!";
+        let name = get().unwrap_or_default().to_string_lossy().to_string();
+        match upload_image(&mut reader) {
+            Ok(file_name) => {
+                let response = format!("{} received {}: HTTP/1.1 200 OK\r\n", name, file_name);
                 stream.write_all(response.as_bytes()).expect("Failed to write to stream");
             }
             Err(e) => {
@@ -42,7 +46,7 @@ fn image_upload_handler(mut stream: TcpStream){
     }
 }
 
-fn handle_image_upload(reader:&mut BufReader<&TcpStream>) ->std::io::Result<()> {
+fn upload_image(reader:&mut BufReader<&TcpStream>) ->std::io::Result<String> {
     let mut header_length_buffer = [0u8; 4];
     // Read the request line
 
@@ -64,5 +68,5 @@ fn handle_image_upload(reader:&mut BufReader<&TcpStream>) ->std::io::Result<()> 
     image.save(format!("./storage-server/{}", file_header.file_name))
         .expect("Failed to save image");
 
-    Ok(())
+    Ok(file_header.file_name)
 }
