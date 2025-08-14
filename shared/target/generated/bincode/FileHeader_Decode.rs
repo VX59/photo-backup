@@ -9,7 +9,8 @@ impl < __Context > :: bincode :: Decode < __Context > for FileHeader
         {
             file_name : :: bincode :: Decode :: decode(decoder) ?, file_size :
             :: bincode :: Decode :: decode(decoder) ?, file_ext : :: bincode
-            :: Decode :: decode(decoder) ?,
+            :: Decode :: decode(decoder) ?, file_datetime : :: bincode ::
+            Decode :: decode(decoder) ?,
         })
     }
 } impl < '__de, __Context > :: bincode :: BorrowDecode < '__de, __Context >
@@ -26,7 +27,8 @@ for FileHeader
             borrow_decode(decoder) ?, file_size : :: bincode :: BorrowDecode
             ::< '_, __Context >:: borrow_decode(decoder) ?, file_ext : ::
             bincode :: BorrowDecode ::< '_, __Context >::
-            borrow_decode(decoder) ?,
+            borrow_decode(decoder) ?, file_datetime : :: bincode ::
+            BorrowDecode ::< '_, __Context >:: borrow_decode(decoder) ?,
         })
     }
 }

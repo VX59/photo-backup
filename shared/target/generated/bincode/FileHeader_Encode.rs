@@ -6,7 +6,8 @@ impl :: bincode :: Encode for FileHeader
     {
         :: bincode :: Encode :: encode(&self.file_name, encoder) ?; :: bincode
         :: Encode :: encode(&self.file_size, encoder) ?; :: bincode :: Encode
-        :: encode(&self.file_ext, encoder) ?; core :: result :: Result ::
+        :: encode(&self.file_ext, encoder) ?; :: bincode :: Encode ::
+        encode(&self.file_datetime, encoder) ?; core :: result :: Result ::
         Ok(())
     }
 }

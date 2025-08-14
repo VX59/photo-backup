@@ -5,4 +5,11 @@ pub struct FileHeader {
     pub file_name: String,
     pub file_size: u64,
     pub file_ext: String,
+    pub file_datetime: std::time::SystemTime,
+}
+
+pub struct Response {
+    pub status_code: u16,
+    pub status_message: String,
+    pub body: Vec<u8>,
 }

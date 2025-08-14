@@ -4,21 +4,28 @@ use std::{
 };
 use::bincode::{config};
 use::shared::FileHeader;
+use shared::Response;
 
 fn main() {
     let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind to address");
-    println!("Server is running on jacob-ubuntu:8080");
 
     for stream in listener.incoming() {
-        let stream = stream.expect("Failed to accept connection");
+        let mut stream = stream.expect("Failed to accept connection");
         println!("New connection: {}", stream.peer_addr().expect("Failed to get peer address"));
 
-        handle_connection(stream);
+        let response = Response {
+            status_code: 200,
+            status_message: "OK".to_string(),
+            body: b"connected to photo server @ jacob-ubuntu:8080".to_vec(),
+        };
+
+        stream.write_all(response.body.as_slice()).expect("Failed to write to stream");
+
+        image_upload_handler(stream);
     }
 }
 
- fn handle_connection(mut stream: TcpStream) {
-    
+fn image_upload_handler(mut stream: TcpStream){
     loop {
         let mut reader = BufReader::new(&stream);
 
@@ -33,9 +40,9 @@ fn main() {
             }
         }
     }
- }
+}
 
- fn handle_image_upload(reader:&mut BufReader<&TcpStream>) ->std::io::Result<()> {
+fn handle_image_upload(reader:&mut BufReader<&TcpStream>) ->std::io::Result<()> {
     let mut header_length_buffer = [0u8; 4];
     // Read the request line
 
@@ -45,7 +52,7 @@ fn main() {
     let mut header_bytes = vec![0u8; header_length as usize];
 
     reader.read_exact(&mut header_bytes).expect("Failed to read image header from stream");
-    
+
     let (file_header, _): (FileHeader, _) = bincode::decode_from_slice(&header_bytes, config::standard())
         .expect("Failed to deserialize file header");
 
@@ -58,4 +65,4 @@ fn main() {
         .expect("Failed to save image");
 
     Ok(())
- }
+}
