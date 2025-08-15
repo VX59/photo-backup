@@ -1,0 +1,104 @@
+use serde::Deserialize;
+use serde::Serialize;
+use std::sync::mpsc::Receiver;
+use std::path::PathBuf;
+use std::sync::mpsc;
+pub struct ConfigApp {
+    pub config: Config,
+    pub config_path: PathBuf,
+    pub log_messages: Vec<String>,
+    pub client_handle: Option<std::thread::JoinHandle<()>>,
+    pub stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub rx: Receiver<String>,
+    pub tx: mpsc::Sender<String>
+}
+
+use crate::client::ImageClient;
+
+impl Config {
+    pub fn load_from_file(path: &str) -> Self {
+        let config_content = std::fs::read_to_string(path)
+            .unwrap_or_else(|_| {
+                println!("Config file not found, using default configuration.");
+                String::new()
+            });
+        serde_json::from_str(&config_content).unwrap_or_else(|_| {
+            println!("Failed to parse config file, using default configuration.");
+            Config::default()
+        })
+    }
+
+    pub fn save_to_file(&self, path: &str) {
+        if let Ok(config_content) = serde_json::to_string_pretty(self) {
+            if let Err(e) = std::fs::write(path, config_content) {
+                eprintln!("Failed to write config file: {}", e);
+
+            }
+        }   
+    }
+}
+
+#[derive(Serialize,Deserialize, Default, Debug, Clone)]
+pub struct Config {
+    pub server_address: String,
+    pub watch_directory: String,
+
+}
+
+impl eframe::App for ConfigApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Photo Client Configuration");
+
+            ui.label("Server Address:");
+            ui.text_edit_singleline(&mut self.config.server_address);
+
+            ui.label("Watch Directory:");
+            ui.text_edit_singleline(&mut self.config.watch_directory);
+
+            if ui.button("Save Configuration").clicked() {
+                self.config.save_to_file(self.config_path.to_str().unwrap());
+            }
+
+            ui.separator();
+            ui.heading("Photo Client Control");
+
+            let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+
+            if ui.button("Start Photo Client").clicked() {
+                println!("Starting The Photo Client...");
+                self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                let tx_clone = self.tx.clone();
+                let stop_flag_clone = stop_flag.clone();
+
+                self.client_handle = Some(std::thread::spawn(move || {
+                    let mut client = ImageClient::new(tx_clone, stop_flag_clone);
+                    client.run().expect("Photo client encountered an error");
+                }));
+
+            }
+
+            if ui.button("Stop Photo Client").clicked() {
+                self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.tx.send("Stopping Photo Client...".to_string()).unwrap();
+            }
+            
+            if ui.button("Clear Log").clicked() {
+                self.log_messages.clear();
+            }
+
+            ui.separator();
+            ui.heading("Log Messages:");
+            for msg in &self.log_messages {
+                ui.label(msg);
+            }
+        });
+
+        while let Ok(msg) = self.rx.try_recv() {
+            self.log_messages.push(msg);
+        }
+        ctx.request_repaint();
+
+    }
+}

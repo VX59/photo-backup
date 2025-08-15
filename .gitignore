@@ -1,3 +1,5 @@
-/photo-client/target/*
-/photo-server/target/*
-/*/storage*
+**/photo-client/target/**
+**/photo-server/target/**
+**/photo-server/storage-server/**
+*.log
+*.tmp

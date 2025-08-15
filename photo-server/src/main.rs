@@ -7,43 +7,71 @@ use::shared::FileHeader;
 use shared::Response;
 use hostname::get;
 
-fn main() {
-    let listener = TcpListener::bind("0.0.0.0:8080").expect("Failed to bind to address");
-    let name = get().unwrap_or_default().to_string_lossy().to_string();
 
-    println!("Photo server '{}' listening on port 8080", name);
-
-    for stream in listener.incoming() {
-        let mut stream = stream.expect("Failed to accept connection");
-        println!("New connection: {}", stream.peer_addr().expect("Failed to get peer address"));
-
-        let response = Response {
-            status_code: 200,
-            status_message: "OK".to_string(),
-            body: format!("connected to photo server @ {}", name).as_bytes().to_vec(),
-        };
-
-        stream.write_all(response.body.as_slice()).expect("Failed to write to stream");
-
-        image_upload_handler(stream);
-    }
+pub struct PhotoServer {
+    pub name: String,
+    pub address: String,
+    pub storage_directory: String,
 }
 
-fn image_upload_handler(mut stream: TcpStream){
-    loop {
-        let mut reader = BufReader::new(&stream);
-        let name = get().unwrap_or_default().to_string_lossy().to_string();
-        match upload_image(&mut reader) {
-            Ok(file_name) => {
-                let response = format!("{} received {}: HTTP/1.1 200 OK\r\n", name, file_name);
-                stream.write_all(response.as_bytes()).expect("Failed to write to stream");
-            }
-            Err(e) => {
-                println!("Connection closed or error: {:?}", e);
-                break;
+impl PhotoServer {
+    pub fn new(name: String, address: String, storage_directory: String) -> Self {
+        PhotoServer {
+            name,
+            address,
+            storage_directory,
+        }
+    }
+
+    pub fn start(&self) -> std::io::Result<()> {
+        let listener = TcpListener::bind(self.address.clone())?;
+        println!("Photo server listening on {}", self.address);
+        
+        for stream in listener.incoming() {
+            let mut stream = stream.expect("Failed to accept connection");
+            println!("New connection: {}", stream.peer_addr().expect("Failed to get peer address"));
+
+            let response = Response {
+                status_code: 200,
+                status_message: "OK".to_string(),
+                body: format!("connected to photo server @ {}", self.name).as_bytes().to_vec(),
+            };
+
+            stream.write_all(response.body.as_slice()).expect("Failed to write to stream");
+
+            self.photo_upload_handler(stream);
+        }
+        
+        Ok(())
+    }
+
+    fn photo_upload_handler(&self, mut stream: TcpStream) {
+        loop {
+            let mut reader = BufReader::new(&stream);
+            let name = get().unwrap_or_default().to_string_lossy().to_string();
+            match upload_image(&mut reader) {
+                Ok(file_name) => {
+                    let response = format!("{} received {}: HTTP/1.1 200 OK\r\n", name, file_name);
+                    stream.write_all(response.as_bytes()).expect("Failed to write to stream");
+                }
+                Err(e) => {
+                    println!("Connection closed or error: {:?}", e);
+                    break;
+                }
             }
         }
     }
+}
+
+fn main() {
+    let name = get().unwrap_or_default().to_string_lossy().to_string();
+    let photo_server = PhotoServer::new(
+        name.clone(),
+        format!("{}:{}", name, "8080"),
+        "./storage-server".to_string(),
+    );
+
+    photo_server.start().expect("Photo server encountered an error");
 }
 
 fn upload_image(reader:&mut BufReader<&TcpStream>) ->std::io::Result<String> {
