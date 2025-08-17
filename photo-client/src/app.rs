@@ -57,20 +57,19 @@ impl eframe::App for ConfigApp {
             ui.text_edit_singleline(&mut self.config.watch_directory);
 
             if ui.button("Save Configuration").clicked() {
+                self.tx.send("Saving configuration...".to_string()).unwrap();
                 self.config.save_to_file(self.config_path.to_str().unwrap());
             }
 
             ui.separator();
             ui.heading("Photo Client Control");
 
-            let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-
             if ui.button("Start Photo Client").clicked() {
-                println!("Starting The Photo Client...");
+                self.tx.send("Starting the photo client...".to_string()).unwrap();
                 self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+               
                 let tx_clone = self.tx.clone();
-                let stop_flag_clone = stop_flag.clone();
+                let stop_flag_clone = self.stop_flag.clone();
 
                 self.client_handle = Some(std::thread::spawn(move || {
                     let mut client = ImageClient::new(tx_clone, stop_flag_clone);
@@ -81,7 +80,12 @@ impl eframe::App for ConfigApp {
 
             if ui.button("Stop Photo Client").clicked() {
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                self.tx.send("Stopping Photo Client...".to_string()).unwrap();
+
+                let _ = self.tx.send("Stopping Photo Client...".to_string());
+
+                if let Some(handle) = self.client_handle.take() {
+                    let _ = handle.join();
+                }
             }
             
             if ui.button("Clear Log").clicked() {

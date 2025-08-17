@@ -77,7 +77,7 @@ impl ImageClient {
         }
 
         while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            match rx.recv_timeout(Duration::from_millis(1000)) {
+            match rx.try_recv() {
                 Ok(event) => {
                     let new_event = match event {
                         Ok(ev) => ev,
@@ -87,18 +87,24 @@ impl ImageClient {
                         }
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
-                        for path in new_event.paths {
-                            if let Err(e) = write_image(path,self.stream.as_mut().unwrap(),&self.log_tx, self.stop_flag.clone()) {
-                                eprintln!("Failed to send image: {}", e);
-                                break;
-                            };
+
+                        if let Some(ref mut stream) = self.stream {
+                            for path in new_event.paths {
+                                if let Err(e) = write_image(path, stream, &self.log_tx, self.stop_flag.clone()) {
+                                    eprintln!("Failed to send image: {}", e);
+                                    break;
+                                };
+                            }
+                        } else {
+                            eprintln!("No active stream to send images.");
                         }
                     }
                 },
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(mpsc::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_secs(1));
                     continue;
                 },
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(mpsc::TryRecvError::Disconnected) => {
                     // Channel disconnected
                     break;
                 }
@@ -110,6 +116,7 @@ impl ImageClient {
         }
         self.stream.take();
         self.log_tx.send("Photo Client stopped.".to_string()).ok();
+        
 
         Ok(())
     }

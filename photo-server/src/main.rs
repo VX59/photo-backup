@@ -2,11 +2,16 @@ use std::{
     io::{BufReader, prelude::*},
     net::{TcpListener, TcpStream},
 };
+
 use::bincode::{config};
 use::shared::FileHeader;
-use shared::Response;
 use hostname::get;
 
+pub struct Response {
+    pub status_code: u16,
+    pub status_message: String,
+    pub body: Vec<u8>,
+}
 
 pub struct PhotoServer {
     pub name: String,
@@ -24,7 +29,7 @@ impl PhotoServer {
     }
 
     pub fn start(&self) -> std::io::Result<()> {
-        let listener = TcpListener::bind(self.address.clone())?;
+        let listener = TcpListener::bind("0.0.0.0:8080")?;
         println!("Photo server listening on {}", self.address);
         
         for stream in listener.incoming() {
@@ -78,7 +83,13 @@ fn upload_image(reader:&mut BufReader<&TcpStream>) ->std::io::Result<String> {
     let mut header_length_buffer = [0u8; 4];
     // Read the request line
 
-    reader.read_exact(&mut header_length_buffer).expect("failed to read length");
+    match reader.read_exact(&mut header_length_buffer) {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Failed to read from stream: {}", e);
+            return Err(e);
+        }
+    }
     let header_length = u32::from_be_bytes(header_length_buffer);
     println!("Header length: {}", header_length);
     let mut header_bytes = vec![0u8; header_length as usize];
