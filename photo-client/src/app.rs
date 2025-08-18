@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::io::Read;
 pub struct ConfigApp {
     pub config: Config,
     pub config_path: PathBuf,
@@ -42,7 +43,7 @@ impl Config {
 pub struct Config {
     pub server_address: String,
     pub watch_directory: String,
-
+    pub server_repo_path: String,
 }
 
 impl eframe::App for ConfigApp {
@@ -56,6 +57,12 @@ impl eframe::App for ConfigApp {
             ui.label("Watch Directory:");
             ui.text_edit_singleline(&mut self.config.watch_directory);
 
+            ui.separator();
+            ui.heading("Photo Server Configuration");
+
+            ui.label("Repository Path on Server:");
+            ui.text_edit_singleline(&mut self.config.server_repo_path);
+
             if ui.button("Save Configuration").clicked() {
                 self.tx.send("Saving configuration...".to_string()).unwrap();
                 self.config.save_to_file(self.config_path.to_str().unwrap());
@@ -65,6 +72,7 @@ impl eframe::App for ConfigApp {
             ui.heading("Photo Client Control");
 
             if ui.button("Start Photo Client").clicked() {
+
                 self.tx.send("Starting the photo client...".to_string()).unwrap();
                 self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
                
@@ -77,8 +85,51 @@ impl eframe::App for ConfigApp {
                 }));
 
             }
+            
+            if ui.button("Backup Now").clicked() {
+                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) == true{
+                    self.tx.send("Photo Client is not running. Start the client before backing up.".to_string()).unwrap();
+                    return;
+                }
+
+                let fmt = "%Y-%m-%d %H:%M:%S%.f %:z";
+                let f = std::fs::File::open("./last_backup.txt");
+                let last_backup_time = match f {
+                    Ok(mut file) => {
+                        let mut contents = String::new();
+                        if let Some(_) = file.read_to_string(&mut contents).ok() {
+                            match chrono::DateTime::parse_from_str(contents.trim(), fmt) {
+                                Ok(dt) => Some(dt.with_timezone(&chrono::Local)),
+                                Err(_) => {
+                                    self.tx.send("Failed to parse last backup time. Using (NOW)".to_string()).unwrap();
+                                    None
+                                }
+                            }
+                        } else {
+                            self.tx.send("Failed to read last backup time. Using (NOW)".to_string()).unwrap();
+                            None
+                        }
+                    }
+                    Err(_) => {
+                        self.tx.send("No previous backup time found".to_string()).unwrap();
+                        chrono::Local::now().checked_sub_signed(chrono::Duration::seconds(1))
+                    }
+                };
+
+                self.tx.send(format!("backing up all files modified since: {}", 
+                    match last_backup_time {
+                        Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
+                        None => "(NOW)".to_string()
+                    }
+                )).unwrap();
+            }
 
             if ui.button("Stop Photo Client").clicked() {
+                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
+                    self.tx.send("Photo Client is already stopped or never started.".to_string()).unwrap();
+                    return;
+                }
+
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
                 let _ = self.tx.send("Stopping Photo Client...".to_string());

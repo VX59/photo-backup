@@ -2,6 +2,7 @@ use std::sync::mpsc::channel;
 use std::time::Duration;
 use bincode::config;
 use image::ImageReader;
+use chrono;
 use bincode::encode_into_slice;
 use std::io;
 use std::io::prelude::*;
@@ -53,6 +54,19 @@ impl ImageClient {
             let response_message = String::from_utf8_lossy(&response_buffer);
             let _ = self.log_tx.send(format!("Connected to server: {}", response_message)).unwrap();
             let _ = self.log_tx.send(format!("initiating image client to monitor '{}' directory for new images...", self.config.watch_directory.as_str())).unwrap();
+        
+            // Send repository path to server
+            let repo_path = self.config.server_repo_path.as_str();
+            if let Some(stream) = self.stream.as_mut() {
+                stream.write_all(repo_path.as_bytes())?;
+                stream.flush()?;
+                let mut ack_buffer = vec![0u8; 256];
+                let n = stream.read(&mut ack_buffer)?;
+                let ack_message = String::from_utf8_lossy(&ack_buffer[..n]);
+                let _ = self.log_tx.send(format!("{}", ack_message)).unwrap();
+            } else {
+                eprintln!("No active stream to send repository path.");
+            }
         };
 
 
@@ -90,7 +104,7 @@ impl ImageClient {
 
                         if let Some(ref mut stream) = self.stream {
                             for path in new_event.paths {
-                                if let Err(e) = write_image(path, stream, &self.log_tx, self.stop_flag.clone()) {
+                                if let Err(e) = upload_image(path, stream, &self.log_tx, self.stop_flag.clone()) {
                                     eprintln!("Failed to send image: {}", e);
                                     break;
                                 };
@@ -123,7 +137,7 @@ impl ImageClient {
 
 }
 
-fn write_image(path:PathBuf, stream:&mut TcpStream, tx: & mpsc::Sender<String>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
+fn upload_image(path:PathBuf, stream:&mut TcpStream, tx: & mpsc::Sender<String>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
     if !path.exists() {
         return Err(io::Error::new(io::ErrorKind::NotFound, "File not found"));
     }
@@ -196,6 +210,13 @@ fn write_image(path:PathBuf, stream:&mut TcpStream, tx: & mpsc::Sender<String>, 
     let response_message = String::from_utf8_lossy(&response_buffer);
     let _ = tx.send(format!("{}", response_message)).unwrap();
     stream.flush()?;
+
+    // log the timestamp of the most recent backup
+    let timestamp = chrono::DateTime::<chrono::Local>::from(file_datetime);
+    let _ = tx.send(format!("Backed up '{}' at {}", file_header.file_name, timestamp.format("%Y-%m-%d %H:%M:%S"))).unwrap();
+
+    let mut f = std::fs::File::create("./last_backup.txt")?;
+    f.write_all(timestamp.to_string().as_bytes())?;
 
     Ok(())
 }

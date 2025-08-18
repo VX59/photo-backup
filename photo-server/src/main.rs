@@ -3,9 +3,11 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 
+use std::path::Path;
 use::bincode::{config};
 use::shared::FileHeader;
 use hostname::get;
+
 
 pub struct Response {
     pub status_code: u16,
@@ -43,6 +45,33 @@ impl PhotoServer {
             };
 
             stream.write_all(response.body.as_slice()).expect("Failed to write to stream");
+
+            // read the repository path from client
+            let mut repo_path_buffer = vec![0u8; 256];
+            let n = stream.read(&mut repo_path_buffer).expect("Failed to read from stream");
+            let repo_path_str = String::from_utf8_lossy(&repo_path_buffer[..n]);
+            let repo_path = Path::new(repo_path_str.as_ref());
+            println!("Server repository path: {}", repo_path_str);
+
+            let mut response_body = format!("OK Repository path : '{}'", repo_path_str).as_bytes().to_vec();
+            if repo_path.exists() == false {
+                response_body = format!("Repository path does not exist on server: {}", repo_path_str).as_bytes().to_vec();
+            }
+
+            let response  = Response {
+                status_code: 200,
+                status_message: "OK".to_string(),
+                body: response_body,
+            };
+
+            stream.write_all(response.body.as_slice()).expect("Failed to write to stream");
+            stream.flush()?;
+
+            if repo_path.exists() == false {
+                println!("Closing connection due to invalid repository path.");
+                drop(stream);
+                continue;
+            }
 
             self.photo_upload_handler(stream);
         }

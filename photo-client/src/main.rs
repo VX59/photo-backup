@@ -18,7 +18,7 @@ fn main() -> std::io::Result<()> {
         config_path,
         log_messages: Vec::new(),
         client_handle: None,
-        stop_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        stop_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         rx,
         tx,
     };

@@ -1,6 +1,8 @@
 **/photo-client/target/**
 **/photo-server/target/**
+**/shared/**
 **/photo-server/storage-server/**
 **photo-client/storage-client/**
+/photo-client/last_backup.txt
 *.log
 *.tmp
