@@ -4,6 +4,7 @@ use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::io::Read;
+use egui::{Checkbox, RichText};
 pub struct ConfigApp {
     pub config: Config,
     pub config_path: PathBuf,
@@ -44,6 +45,7 @@ pub struct Config {
     pub server_address: String,
     pub watch_directory: String,
     pub server_repo_path: String,
+    pub recursive_backup: bool,
 }
 
 impl eframe::App for ConfigApp {
@@ -65,6 +67,11 @@ impl eframe::App for ConfigApp {
 
             if ui.button("Save Configuration").clicked() {
                 self.tx.send("Saving configuration...".to_string()).unwrap();
+
+                // check if the monitored path exists
+                if !std::path::Path::new(&self.config.watch_directory).exists() {
+                    self.tx.send("Watch directory is not a valid path.".to_string()).unwrap();
+                }
                 self.config.save_to_file(self.config_path.to_str().unwrap());
             }
 
@@ -86,11 +93,14 @@ impl eframe::App for ConfigApp {
 
             }
             
+            ui.add(Checkbox::new(&mut self.config.recursive_backup, RichText::new("Enable Recursive Backup").italics()));
+
             if ui.button("Backup Now").clicked() {
                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) == true{
                     self.tx.send("Photo Client is not running. Start the client before backing up.".to_string()).unwrap();
                     return;
                 }
+
 
                 let fmt = "%Y-%m-%d %H:%M:%S%.f %:z";
                 let f = std::fs::File::open("./last_backup.txt");

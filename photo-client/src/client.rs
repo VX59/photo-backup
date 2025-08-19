@@ -1,6 +1,7 @@
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use bincode::config;
+use egui::TextBuffer;
 use image::ImageReader;
 use chrono;
 use bincode::encode_into_slice;
@@ -104,7 +105,7 @@ impl ImageClient {
 
                         if let Some(ref mut stream) = self.stream {
                             for path in new_event.paths {
-                                if let Err(e) = upload_image(path, stream, &self.log_tx, self.stop_flag.clone()) {
+                                if let Err(e) = upload_image(path, "...".to_string(),stream, &self.log_tx, self.stop_flag.clone()) {
                                     eprintln!("Failed to send image: {}", e);
                                     break;
                                 };
@@ -137,8 +138,8 @@ impl ImageClient {
 
 }
 
-fn upload_image(path:PathBuf, stream:&mut TcpStream, tx: & mpsc::Sender<String>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
-    if !path.exists() {
+fn upload_image(local_path:PathBuf, dest_path:String, stream:&mut TcpStream, tx: & mpsc::Sender<String>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
+    if !local_path.exists() {
         return Err(io::Error::new(io::ErrorKind::NotFound, "File not found"));
     }
 
@@ -147,26 +148,25 @@ fn upload_image(path:PathBuf, stream:&mut TcpStream, tx: & mpsc::Sender<String>,
         if stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(())
         }
-        let metadata = std::fs::metadata(&path)?;
+        let metadata = std::fs::metadata(&local_path)?;
         let current_size = metadata.len();
         if current_size == last_size {
             break;
         }
         last_size = current_size;
-        std::thread::sleep(std::time::Duration::from_millis(250));
     }
 
-    let file_name = path.file_name()
+    let file_name = local_path.file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid file name"))?;
 
-    let file_ext = path.extension()
+    let file_ext = local_path.extension()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
 
-    let file_datetime = path.metadata()?.created()?;
+    let file_datetime = local_path.metadata()?.created()?;
 
-    let image = ImageReader::open(path.clone())?.decode().expect("unable to decode image");
+    let image = ImageReader::open(local_path.clone())?.decode().expect("unable to decode image");
     let mut image_bytes: Vec<u8> = Vec::new();
 
     if file_ext == "png" {
@@ -184,6 +184,7 @@ fn upload_image(path:PathBuf, stream:&mut TcpStream, tx: & mpsc::Sender<String>,
         file_size: image_bytes.len() as u64,
         file_ext: file_ext.to_string(),
         file_datetime: file_datetime,
+        file_dest: dest_path,
     };
 
     let mut header_bytes = vec![0u8; 1024];
