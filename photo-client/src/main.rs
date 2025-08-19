@@ -7,11 +7,14 @@ mod client;
 
 use app::ConfigApp;
 use app::Config;
+use app::UiState;
+
+use crate::app::ClientCommands;
 
 fn main() -> std::io::Result<()> {
     let config_path = PathBuf::from("photo-client-config.json");
 
-    let (tx, rx) = mpsc::channel::<String>();
+    let (tx, rx) = mpsc::channel::<ClientCommands>();
 
     let app = ConfigApp {
         config: Config::load_from_file(config_path.to_str().unwrap()),
@@ -19,8 +22,10 @@ fn main() -> std::io::Result<()> {
         log_messages: Vec::new(),
         client_handle: None,
         stop_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        rx,
-        tx,
+        log_rx: rx,
+        log_tx: tx,
+        cmd_tx: None,
+        ui: UiState::default(),
     };
 
     let native_options = eframe::NativeOptions::default();

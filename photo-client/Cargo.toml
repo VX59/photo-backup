@@ -10,6 +10,7 @@ shared = { path = "../shared" }
 bincode = "2.0.1"
 notify = "8.2.0"
 eframe = "0.32.0"
-serde_json = "1.0.142"
+
 egui = "0.32.0"
 chrono = "0.4.41"
+serde_json = "1.0.143"

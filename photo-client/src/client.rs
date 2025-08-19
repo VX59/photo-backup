@@ -1,7 +1,6 @@
 use std::sync::mpsc::channel;
 use std::time::Duration;
 use bincode::config;
-use egui::TextBuffer;
 use image::ImageReader;
 use chrono;
 use bincode::encode_into_slice;
@@ -15,22 +14,26 @@ use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
+use shared::{read_response, send_response, Response};
+use crate::app::ClientCommands;
 use crate::app::Config;
 
 pub struct ImageClient {
-    log_tx: mpsc::Sender<String>,
+    pub log_tx: mpsc::Sender<ClientCommands>,
+    rx: mpsc::Receiver<ClientCommands>,
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     config: Config,
     stream: Option<TcpStream>,
 }
 
 impl ImageClient {
-    pub fn new(log_tx: mpsc::Sender<String>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(log_tx: mpsc::Sender<ClientCommands>,rx:mpsc::Receiver<ClientCommands>,stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         let config_path = PathBuf::from("photo-client-config.json");
         let config: Config = Config::load_from_file(config_path.to_str().unwrap());
 
         ImageClient {
             log_tx,
+            rx,
             stop_flag,
             config,
             stream: None,
@@ -38,44 +41,76 @@ impl ImageClient {
     }
 
     pub fn connect(&mut self) -> io::Result<()> {
-        if let Ok(s) = TcpStream::connect(self.config.server_address.as_str()) {
-            self.stream = Some(s);
-            let response_buffer = {
-                let mut buffer = vec![0u8; 256];
-                let n = match self.stream.as_mut().unwrap().read(&mut buffer) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        eprintln!("Failed to read from server: {}", e);
-                        return Err(e);
+        match TcpStream::connect(self.config.server_address.as_str()) {
+            Ok(s) => {
+                self.stream = Some(s);
+
+                if let Some(stream) = self.stream.as_mut() {
+                    // Handle the connection response
+                    
+                    let connection_response = read_response(stream)?;
+                    let connection_response_message = String::from_utf8_lossy(&connection_response.body);
+                    let connection_response_code = connection_response.status_code;
+
+                    let _ = self.log_tx.send(ClientCommands::Log(format!("{} | [ {} ]",connection_response_code,  connection_response_message))).unwrap();
+
+                    // Send storage directory path to server
+
+                    let request = Response {
+                        status_code: 0,
+                        status_message: "...".to_string(),
+                        body: self.config.server_storage_directory.as_bytes().to_vec(),
+                    };
+
+                    send_response(request, stream)?;
+
+                    // Handle the storage directory response
+
+                    let storage_directory_response = read_response(stream)?;
+                    let storage_directory_response_message = String::from_utf8_lossy(&storage_directory_response.body);
+                    let storage_directory_response_code = storage_directory_response.status_code;
+                    
+                    let _ = self.log_tx.send(ClientCommands::Log(format!("{} | [ {} ]", storage_directory_response_code, storage_directory_response_message))).unwrap();
+                }
+                
+                while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    match self.rx.try_recv() {
+                        Ok(new_command) => {
+                            match new_command {
+                                ClientCommands::Log(_) => {
+
+                                }
+                                ClientCommands::CreateRepo(msg) => {
+                                    println!("creating repo");
+                                    self.create_repository(msg.to_string())?;
+                                }
+                            }
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => { /* just continue */ },
+                        Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                     }
-                };
-                buffer[..n].to_vec()
-            };
-
-            let response_message = String::from_utf8_lossy(&response_buffer);
-            let _ = self.log_tx.send(format!("Connected to server: {}", response_message)).unwrap();
-            let _ = self.log_tx.send(format!("initiating image client to monitor '{}' directory for new images...", self.config.watch_directory.as_str())).unwrap();
-        
-            // Send repository path to server
-            let repo_path = self.config.server_repo_path.as_str();
-            if let Some(stream) = self.stream.as_mut() {
-                stream.write_all(repo_path.as_bytes())?;
-                stream.flush()?;
-                let mut ack_buffer = vec![0u8; 256];
-                let n = stream.read(&mut ack_buffer)?;
-                let ack_message = String::from_utf8_lossy(&ack_buffer[..n]);
-                let _ = self.log_tx.send(format!("{}", ack_message)).unwrap();
-            } else {
-                eprintln!("No active stream to send repository path.");
-            }
-        };
-
-
+                }
+            },
+            Err(e) => self.log_tx.send(ClientCommands::Log(format!("error {}",e).to_string())).unwrap(),
+        }
         Ok(())
     }
 
-    pub fn run(&mut self) -> io::Result<()> {
-        self.connect()?;
+    pub fn create_repository(&mut self, repo_name:String) -> io::Result<()> {
+        
+        if let Some(stream) = self.stream.as_mut() {
+            let request = Response {
+                status_code: 0,
+                status_message: "...".to_string(),
+                body: repo_name.as_bytes().to_vec(),
+            };
+
+            send_response(request, stream)?;
+        }
+        Ok(())
+    }
+
+    pub fn run_streaming_channel(&mut self) -> io::Result<()> {
         let (tx, rx) = channel();
         let mut watcher = match RecommendedWatcher::new(move |res| tx.send(res).unwrap(), notify::Config::default())
             {
@@ -130,7 +165,7 @@ impl ImageClient {
             stream.shutdown(std::net::Shutdown::Both).ok();
         }
         self.stream.take();
-        self.log_tx.send("Photo Client stopped.".to_string()).ok();
+        self.log_tx.send(ClientCommands::Log("Photo Client stopped.".to_string())).ok();
         
 
         Ok(())
@@ -138,7 +173,7 @@ impl ImageClient {
 
 }
 
-fn upload_image(local_path:PathBuf, dest_path:String, stream:&mut TcpStream, tx: & mpsc::Sender<String>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
+fn upload_image(local_path:PathBuf, dest_path:String, stream:&mut TcpStream, tx: & mpsc::Sender<ClientCommands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
     if !local_path.exists() {
         return Err(io::Error::new(io::ErrorKind::NotFound, "File not found"));
     }
@@ -209,12 +244,12 @@ fn upload_image(local_path:PathBuf, dest_path:String, stream:&mut TcpStream, tx:
         buffer[..n].to_vec()
     };
     let response_message = String::from_utf8_lossy(&response_buffer);
-    let _ = tx.send(format!("{}", response_message)).unwrap();
+    let _ = tx.send(ClientCommands::Log(format!("{}", response_message))).unwrap();
     stream.flush()?;
 
     // log the timestamp of the most recent backup
     let timestamp = chrono::DateTime::<chrono::Local>::from(file_datetime);
-    let _ = tx.send(format!("Backed up '{}' at {}", file_header.file_name, timestamp.format("%Y-%m-%d %H:%M:%S"))).unwrap();
+    let _ = tx.send(ClientCommands::Log(format!("Backed up '{}' at {}", file_header.file_name, timestamp.format("%Y-%m-%d %H:%M:%S")))).unwrap();
 
     let mut f = std::fs::File::create("./last_backup.txt")?;
     f.write_all(timestamp.to_string().as_bytes())?;

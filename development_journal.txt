@@ -1,0 +1,5 @@
+8/19/25
+
+when the server starts I want it to load a config file. the config contains existing repositories
+
+it should not just create a default directory. The client needs to choose which repository to connect to or create a new one.
