@@ -3,15 +3,14 @@ use std::{
     net::{TcpListener, TcpStream},
 };
 
+use anyhow::Result;
 use std::path::Path;
 use::bincode::{config};
 use::shared::FileHeader;
 use serde::Deserialize;
 use serde::Serialize;
-use::shared::Commands;
-use std::sync::{Arc, Mutex};
 
-use shared::{read_request, read_response, send_response, RequestTypes, Response};
+use shared::{read_request, send_response, RequestTypes, Response};
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
@@ -45,6 +44,15 @@ impl Config {
 
             }
         }   
+    }
+
+    pub fn add_repo(&mut self, repo:String, path: &str) {
+        if !self.repo_list.contains(&repo) {
+            self.repo_list.push(repo);
+            self.save_to_file(path);
+        } else {
+            eprintln!("Repo already exists in config.");
+        }
     }
 }
 
@@ -113,10 +121,7 @@ impl PhotoServer {
                 response  = Response {
                     status_code: 200,
                     status_message: "OK".to_string(),
-                    body: match serde_json::to_vec(&available_repositories) {
-                        Ok(json_body) => json_body,
-                        Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other,e)),
-                    },
+                    body: serde_json::to_vec(&available_repositories)?,
                 };
             }
             
@@ -125,10 +130,10 @@ impl PhotoServer {
             self.storage_directory = storage_directory_request_message.to_string();
             
             let storage_directory_clone = self.storage_directory.clone();
-
+            let mut config_clone = self.config.clone();
             // spawn a request handler in a seperate thread so we can accept another connection
             let _ = std::thread::spawn(move || {
-                if let Err(e) = request_handler(storage_directory_clone, stream) {
+                if let Err(e) = request_handler(storage_directory_clone, stream, &mut config_clone) {
                     println!("{}", e);
                 }
             });
@@ -142,7 +147,7 @@ impl PhotoServer {
             let mut reader = BufReader::new(&stream);
             match self.upload_image(&mut reader) {
                 Ok(file_name) => {
-                    let response = format!("{} received {}: HTTP/1.1 200 OK\r\n", self.name, file_name);
+                    let response = format!("{} received {:?}: HTTP/1.1 200 OK\r\n", self.name, file_name);
                     if let Err(_e) = stream.write_all(response.as_bytes()) {
                         println!("Failed to write response to stream");
                         break;
@@ -156,44 +161,26 @@ impl PhotoServer {
         }
     }
 
-    fn upload_image(&mut self, reader:&mut BufReader<&TcpStream>) ->std::io::Result<String> {
+    fn upload_image(&mut self, reader:&mut BufReader<&TcpStream>) -> Result<String, anyhow::Error> {
         let mut header_length_buffer = [0u8; 4];
         // Read the request line
 
-        if let Err(e) = reader.read_exact(&mut header_length_buffer) {
-            println!("Failed to read from stream: {}", e);
-            return Err(e);
-        }
+        reader.read_exact(&mut header_length_buffer)?;
 
         let header_length = u32::from_be_bytes(header_length_buffer);
         println!("Header length: {}", header_length);
         let mut header_bytes = vec![0u8; header_length as usize];
 
-        if let Err(e) = reader.read_exact(&mut header_bytes) {
-            println!("Failed to read image header from stream: {}", e);
-            return Err(e);
-        }
-
-        let (file_header, _): (FileHeader, _) = match bincode::decode_from_slice(&header_bytes, config::standard()) {
-            Ok(res) => res,
-            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e))
-        };
+        reader.read_exact(&mut header_bytes)?;
+        
+        let (file_header, _): (FileHeader, _) = bincode::decode_from_slice(&header_bytes, config::standard())?;
 
         let mut image_bytes = vec![0u8; file_header.file_size as usize];
         println!("Receiving file: {} ({} bytes)", file_header.file_name, file_header.file_size);
 
-        if let Err(e) = reader.read_exact(&mut image_bytes) {
-            println!("Failed to read image header from stream");
-            return Err(e);
-        }   
+        reader.read_exact(&mut image_bytes)?;
 
-        let image = match image::load_from_memory(&image_bytes) {
-            Ok(i) => i,
-            Err(e) => {
-                println!("Failed to decode image");
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
-            }
-        };
+        let image = image::load_from_memory(&image_bytes)?;
 
         let mut image_path = format!("{}/{}",self.storage_directory.clone(), file_header.file_name);
         if file_header.file_dest != "..." {
@@ -204,16 +191,14 @@ impl PhotoServer {
             }
         }
 
-        match image.save(std::path::Path::new(&image_path)) {
-            Ok(_) => return Ok(file_header.file_name),
-            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e))
-        }
+        image.save(std::path::Path::new(&image_path))?;
+        Ok(image_path)
 
     }
 }
 
 
-fn request_handler(storage_directory: String, mut stream:TcpStream) -> std::io::Result<()>{
+fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut Config) -> std::io::Result<()>{
     println!("Launching a request handler");
     loop {
         let request = read_request(&mut stream)?;
@@ -243,6 +228,10 @@ fn request_handler(storage_directory: String, mut stream:TcpStream) -> std::io::
                         status_code = 600;
                         status_message = "Err";
                     }
+
+                    // save it to the config
+                    config.add_repo(repo_name, "photo-server-json.config");
+
                     response = Response {
                         status_code: status_code,
                         status_message: status_message.to_string(),
