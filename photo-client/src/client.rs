@@ -75,9 +75,9 @@ impl ImageClient {
                         // send the repo list to the app
                         let available_repositories:Vec<String> = serde_json::from_slice(&response.body)?;
                         self.app_tx.send(Commands::PostRepos(available_repositories)).unwrap();
+                    } else {
+                        self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
                     }
-
-                    self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
                 }
                 
                 // listen to the app for commands
@@ -91,8 +91,15 @@ impl ImageClient {
                                 Commands::StartStream(repo) => {
 
                                     // request a file streaming channel - the server will open another port
-                                    let file_stream = self.setup_streaming_channel(repo.to_string())?;
+                                    let mut file_stream = self.setup_streaming_channel(repo.to_string())?;
                                     // run the file streaming channel on a seperate thread
+
+                                    let config_clone = self.config.clone();
+                                    let app_tx_clone = self.app_tx.clone();
+                                    let stop_flag_clone = self.stop_flag.clone();
+                                    std::thread::spawn(move || {
+                                        run_streaming_channel(&mut file_stream, config_clone, app_tx_clone, stop_flag_clone)
+                                    });
                                 }
                                 _ => {},
                             }
@@ -126,11 +133,17 @@ impl ImageClient {
             let response = read_response(stream)?;
             let file_stream_address = String::from_utf8_lossy(&response.body).to_string();
             
-            let file_stream = TcpStream::connect(file_stream_address.as_str())?;
+            self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response.status_message))).unwrap();
 
-            let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response.status_message))).unwrap();
+            let mut file_stream = TcpStream::connect(file_stream_address.as_str())?;
+
             // handshake to confirm connection
             
+            let file_stream_response = read_response(&mut file_stream)?;
+            let response_message = String::from_utf8_lossy(&file_stream_response.body);
+
+            self.app_tx.send(Commands::Log(format!("{} | [ {} ]", file_stream_response.status_code, response_message))).unwrap();
+
             return Ok(file_stream);
         }
         Err(std::io::Error::new(std::io::ErrorKind::NotConnected,"Main stream is not connected"))
@@ -153,7 +166,9 @@ impl ImageClient {
         Ok(())
     }
 
-    pub fn run_streaming_channel(&mut self) -> io::Result<()> {
+}
+
+pub fn run_streaming_channel(file_stream:&mut TcpStream, config:Config, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<()> {
         let (tx, rx) = channel();
         let mut watcher = match RecommendedWatcher::new(move |res| tx.send(res).unwrap(), notify::Config::default())
             {
@@ -164,12 +179,12 @@ impl ImageClient {
             }
         };
 
-        if let Err(e) = watcher.watch(Path::new(self.config.watch_directory.as_str()), RecursiveMode::Recursive) {
+        if let Err(e) = watcher.watch(Path::new(config.watch_directory.as_str()), RecursiveMode::Recursive) {
             eprintln!("Failed to watch directory: {}", e);
             return Err(io::Error::new(io::ErrorKind::Other, "Failed to watch directory"));
         }
 
-        while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
             match rx.try_recv() {
                 Ok(event) => {
                     let new_event = match event {
@@ -180,16 +195,11 @@ impl ImageClient {
                         }
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
-
-                        if let Some(ref mut stream) = self.stream {
-                            for path in new_event.paths {
-                                if let Err(e) = upload_image(path, "...".to_string(),stream, &self.app_tx, self.stop_flag.clone()) {
-                                    eprintln!("Failed to send image: {}", e);
-                                    break;
-                                };
-                            }
-                        } else {
-                            eprintln!("No active stream to send images.");
+                        for path in new_event.paths {
+                            if let Err(e) = upload_image(path, "...".to_string(),file_stream, &app_tx, stop_flag.clone()) {
+                                eprintln!("Failed to send image: {}", e);
+                                break;
+                            };
                         }
                     }
                 },
@@ -204,17 +214,11 @@ impl ImageClient {
             }
         }
 
-        if let Some(stream) = self.stream.as_mut() {
-            stream.shutdown(std::net::Shutdown::Both).ok();
-        }
-        self.stream.take();
-        self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
-        
+        file_stream.shutdown(std::net::Shutdown::Both).ok();
+        app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
 
         Ok(())
     }
-
-}
 
 fn upload_image(local_path:PathBuf, dest_path:String, stream:&mut TcpStream, tx: & mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<()> { 
     if !local_path.exists() {
@@ -292,7 +296,6 @@ fn upload_image(local_path:PathBuf, dest_path:String, stream:&mut TcpStream, tx:
 
     // log the timestamp of the most recent backup
     let timestamp = chrono::DateTime::<chrono::Local>::from(file_datetime);
-    let _ = tx.send(Commands::Log(format!("Backed up '{}' at {}", file_header.file_name, timestamp.format("%Y-%m-%d %H:%M:%S")))).unwrap();
 
     let mut f = std::fs::File::create("./last_backup.txt")?;
     f.write_all(timestamp.to_string().as_bytes())?;
