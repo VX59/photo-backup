@@ -4,7 +4,7 @@ use std::io::Write;
 use bincode::{Decode, Encode};
 use serde::Deserialize;
 use serde::Serialize;
-
+use anyhow::Result;
 #[derive(Debug, Encode, Decode)]
 pub struct FileHeader {
     pub file_name: String,
@@ -37,6 +37,8 @@ pub struct Request {
 pub enum Commands {
     Log(String),
     CreateRepo(String),
+    PostRepos(Vec<String>),
+    StartStream(String),
 }
 
 pub fn read_response(stream:&mut TcpStream) -> Result<Response,std::io::Error> {
@@ -45,12 +47,12 @@ pub fn read_response(stream:&mut TcpStream) -> Result<Response,std::io::Error> {
 
     let mut response_buffer = vec![0u8; u32::from_be_bytes(length_buffer) as usize];
     stream.read_exact(&mut response_buffer)?;
-    let response: Response = serde_json::from_slice(&response_buffer).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let response: Response = serde_json::from_slice(&response_buffer)?;
     Ok(response)
 }
 
 pub fn send_response(response: Response, stream:&mut TcpStream) -> Result<(), std::io::Error> {
-    let ser_response = serde_json::to_vec(&response).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let ser_response = serde_json::to_vec(&response)?;
     stream.write_all(&(ser_response.len() as u32).to_be_bytes())?;
     stream.write_all(&ser_response)?;
     Ok(())
@@ -62,12 +64,12 @@ pub fn read_request(stream: &mut TcpStream) -> Result<Request, std::io::Error> {
 
     let mut request_buffer = vec![0u8; u32::from_be_bytes(length_buffer) as usize];
     stream.read_exact(&mut request_buffer)?;
-    let request: Request = serde_json::from_slice(&request_buffer).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let request: Request = serde_json::from_slice(&request_buffer)?;
     Ok(request)
 }
 
 pub fn send_request(request:Request, stream:&mut TcpStream) -> Result<(), std::io::Error> {
-    let ser_request = serde_json::to_vec(&request).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let ser_request = serde_json::to_vec(&request)?;
     stream.write_all(&(ser_request.len() as u32).to_be_bytes())?;
     stream.write_all(&ser_request)?;
     Ok(())

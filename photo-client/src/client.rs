@@ -16,13 +16,12 @@ use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use shared::{read_response, send_response, Response};
+use shared::{read_response, Request};
 use shared::Commands;
-use shared::Request;
 use crate::app::Config;
 
 pub struct ImageClient {
-    pub log_tx: mpsc::Sender<Commands>,
+    pub app_tx: mpsc::Sender<Commands>,
     rx: mpsc::Receiver<Commands>,
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     config: Config,
@@ -30,13 +29,13 @@ pub struct ImageClient {
 }
 
 impl ImageClient {
-    pub fn new(log_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         let config_path = PathBuf::from("photo-client-config.json");
         let config: Config = Config::load_from_file(config_path.to_str().unwrap());
 
         ImageClient {
-            log_tx,
-            rx,
+            app_tx,
+            rx, 
             stop_flag,
             config,
             stream: None,
@@ -55,7 +54,7 @@ impl ImageClient {
                     let connection_response_message = String::from_utf8_lossy(&connection_response.body);
                     let connection_response_code = connection_response.status_code;
 
-                    let _ = self.log_tx.send(Commands::Log(format!("{} | [ {} ]",connection_response_code,  connection_response_message))).unwrap();
+                    let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]",connection_response_code,  connection_response_message))).unwrap();
 
                     // Send storage directory path to server
 
@@ -68,11 +67,17 @@ impl ImageClient {
 
                     // Handle the storage directory response
 
-                    let storage_directory_response = read_response(stream)?;
-                    let storage_directory_response_message = String::from_utf8_lossy(&storage_directory_response.body);
-                    let storage_directory_response_code = storage_directory_response.status_code;
+                    let response = read_response(stream)?;
+                    let response_message = String::from_utf8_lossy(&response.body);
+                    let response_code = response.status_code;
                     
-                    let _ = self.log_tx.send(Commands::Log(format!("{} | [ {} ]", storage_directory_response_code, storage_directory_response_message))).unwrap();
+                    if response_code == 200 {
+                        // send the repo list to the app
+                        let available_repositories:Vec<String> = serde_json::from_slice(&response.body)?;
+                        self.app_tx.send(Commands::PostRepos(available_repositories)).unwrap();
+                    }
+
+                    self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
                 }
                 
                 // listen to the app for commands
@@ -80,23 +85,55 @@ impl ImageClient {
                     match self.rx.try_recv() {
                         Ok(new_command) => {
                             match new_command {
-                                Commands::Log(_) => {
-
-                                }
                                 Commands::CreateRepo(msg) => {
-                                    println!("creating repo");
                                     self.create_repository(msg.to_string())?;
                                 }
+                                Commands::StartStream(repo) => {
+
+                                    // request a file streaming channel - the server will open another port
+                                    let file_stream = self.setup_streaming_channel(repo.to_string())?;
+                                    // run the file streaming channel on a seperate thread
+                                }
+                                _ => {},
                             }
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => { /* just continue */ },
                         Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
                     }
                 }
+                
+                if let Some(stream) = self.stream.as_mut() {
+                    stream.shutdown(std::net::Shutdown::Both).ok();
+                }
+                self.stream.take();
+                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
+
             },
-            Err(e) => self.log_tx.send(Commands::Log(format!("error {}",e).to_string())).unwrap(),
+            Err(e) => self.app_tx.send(Commands::Log(format!("error {}",e).to_string())).unwrap(),
         }
         Ok(())
+    }
+
+    pub fn setup_streaming_channel(&mut self, repo:String) -> io::Result<TcpStream> {
+        if let Some(stream) = self.stream.as_mut() {
+            let request = Request {
+                request_type: RequestTypes::StartStream,
+                body: repo.as_bytes().to_vec(), // implement security stuff here
+            };
+
+            send_request(request, stream)?;
+
+            let response = read_response(stream)?;
+            let file_stream_address = String::from_utf8_lossy(&response.body).to_string();
+            
+            let file_stream = TcpStream::connect(file_stream_address.as_str())?;
+
+            let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response.status_message))).unwrap();
+            // handshake to confirm connection
+            
+            return Ok(file_stream);
+        }
+        Err(std::io::Error::new(std::io::ErrorKind::NotConnected,"Main stream is not connected"))
     }
 
     pub fn create_repository(&mut self, repo_name:String) -> io::Result<()> {
@@ -111,7 +148,7 @@ impl ImageClient {
 
             let response = read_response(stream)?;
             let response_message = String::from_utf8_lossy(&response.body);
-            let _ = self.log_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message))).unwrap();
+            let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message))).unwrap();
         }
         Ok(())
     }
@@ -139,14 +176,14 @@ impl ImageClient {
                         Ok(ev) => ev,
                         Err(e) => {
                             eprintln!("Watch error: {:?}", e);
-                            continue;   
+                            continue;
                         }
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
 
                         if let Some(ref mut stream) = self.stream {
                             for path in new_event.paths {
-                                if let Err(e) = upload_image(path, "...".to_string(),stream, &self.log_tx, self.stop_flag.clone()) {
+                                if let Err(e) = upload_image(path, "...".to_string(),stream, &self.app_tx, self.stop_flag.clone()) {
                                     eprintln!("Failed to send image: {}", e);
                                     break;
                                 };
@@ -171,7 +208,7 @@ impl ImageClient {
             stream.shutdown(std::net::Shutdown::Both).ok();
         }
         self.stream.take();
-        self.log_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
+        self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
         
 
         Ok(())

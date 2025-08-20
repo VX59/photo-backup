@@ -22,9 +22,9 @@ fn main() -> std::io::Result<()> {
         log_messages: Vec::new(),
         client_handle: None,
         stop_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
-        log_rx: rx,
-        log_tx: tx,
-        cmd_tx: None,
+        app_rx: rx,
+        app_tx: tx,
+        cli_tx: None,
         ui: UiState::default(),
     };
 

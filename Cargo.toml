@@ -1,0 +1,2 @@
+[workspace]
+members = ["photo-client", "photo-server", "shared"]
