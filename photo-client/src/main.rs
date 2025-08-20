@@ -9,12 +9,12 @@ use app::ConfigApp;
 use app::Config;
 use app::UiState;
 
-use crate::app::ClientCommands;
+use shared::Commands;
 
 fn main() -> std::io::Result<()> {
     let config_path = PathBuf::from("photo-client-config.json");
 
-    let (tx, rx) = mpsc::channel::<ClientCommands>();
+    let (tx, rx) = mpsc::channel::<Commands>();
 
     let app = ConfigApp {
         config: Config::load_from_file(config_path.to_str().unwrap()),

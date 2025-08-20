@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::io::Read;
 use egui::{Checkbox, RichText};
+use shared::Commands;
 
 pub struct ConfigApp {
     pub config: Config,
@@ -12,15 +13,10 @@ pub struct ConfigApp {
     pub log_messages: Vec<String>,
     pub client_handle: Option<std::thread::JoinHandle<()>>,
     pub stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    pub log_rx: Receiver<ClientCommands>,
-    pub log_tx: mpsc::Sender<ClientCommands>,
-    pub cmd_tx: Option<mpsc::Sender<ClientCommands>>,
+    pub log_rx: Receiver<Commands>,
+    pub log_tx: mpsc::Sender<Commands>,
+    pub cmd_tx: Option<mpsc::Sender<Commands>>,
     pub ui: UiState,
-}
-
-pub enum ClientCommands {
-    Log(String),
-    CreateRepo(String),
 }
 
 pub struct UiState {
@@ -89,11 +85,11 @@ impl eframe::App for ConfigApp {
             ui.text_edit_singleline(&mut self.config.server_storage_directory);
 
             if ui.button("Save Configuration").clicked() {
-                self.log_tx.send(ClientCommands::Log("Saving configuration...".to_string())).unwrap();
+                self.log_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
 
                 // check if the monitored path exists
                 if !std::path::Path::new(&self.config.watch_directory).exists() {
-                    self.log_tx.send(ClientCommands::Log("Watch directory is not a valid path.".to_string())).unwrap();
+                    self.log_tx.send(Commands::Log("Watch directory is not a valid path.".to_string())).unwrap();
                 }
                 self.config.save_to_file(self.config_path.to_str().unwrap());
             }
@@ -115,11 +111,11 @@ impl eframe::App for ConfigApp {
                     if ui.button("Create").clicked() {
 
                         if let Some(cmd_tx) = &self.cmd_tx {
-                            self.log_tx.send(ClientCommands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
-                            cmd_tx.send(ClientCommands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
+                            self.log_tx.send(Commands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
+                            cmd_tx.send(Commands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
                             
                         } else {
-                            self.log_tx.send(ClientCommands::Log("The client isn't running".to_string())).unwrap();
+                            self.log_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
                         }
                         
                         self.ui.new_repo_name.clear();
@@ -131,23 +127,23 @@ impl eframe::App for ConfigApp {
             // opens the command channel.. once a repository is open open a seperate streaming channel
             if ui.button("Start Photo Client").clicked() {
                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    self.log_tx.send(ClientCommands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
+                    self.log_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
                     self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
                 
                     let log_tx_clone = self.log_tx.clone();
                     let stop_flag_clone = self.stop_flag.clone();
 
-                    let (cmd_tx, cmd_rx) = mpsc::channel::<ClientCommands>();
+                    let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
                     self.cmd_tx = Some(cmd_tx.clone());
 
                     self.client_handle = Some(std::thread::spawn(move || {
                         let mut client = ImageClient::new(log_tx_clone, cmd_rx, stop_flag_clone);
                         if let Err(e) = client.connect() {
-                           client.log_tx.send(ClientCommands::Log(format!("{}",e).to_string())).unwrap();
+                           client.log_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
                         }
                     }));
                 } else {
-                    self.log_tx.send(ClientCommands::Log("The client is already running".to_string())).unwrap();
+                    self.log_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
                 }  
             }
             
@@ -155,7 +151,7 @@ impl eframe::App for ConfigApp {
 
             if ui.button("Backup Now").clicked() {
                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) == true{
-                    self.log_tx.send(ClientCommands::Log("Photo Client is not running. Start the client before backing up.".to_string())).unwrap();
+                    self.log_tx.send(Commands::Log("Photo Client is not running. Start the client before backing up.".to_string())).unwrap();
                     return;
                 }
 
@@ -169,22 +165,22 @@ impl eframe::App for ConfigApp {
                             match chrono::DateTime::parse_from_str(contents.trim(), fmt) {
                                 Ok(dt) => Some(dt.with_timezone(&chrono::Local)),
                                 Err(_) => {
-                                    self.log_tx.send(ClientCommands::Log("Failed to parse last backup time. Using (NOW)".to_string())).unwrap();
+                                    self.log_tx.send(Commands::Log("Failed to parse last backup time. Using (NOW)".to_string())).unwrap();
                                     None
                                 }
                             }
                         } else {
-                            self.log_tx.send(ClientCommands::Log("Failed to read last backup time. Using (NOW)".to_string())).unwrap();
+                            self.log_tx.send(Commands::Log("Failed to read last backup time. Using (NOW)".to_string())).unwrap();
                             None
                         }
                     }
                     Err(_) => {
-                        self.log_tx.send(ClientCommands::Log("No previous backup time found".to_string())).unwrap();
+                        self.log_tx.send(Commands::Log("No previous backup time found".to_string())).unwrap();
                         chrono::Local::now().checked_sub_signed(chrono::Duration::seconds(1))
                     }
                 };
 
-                self.log_tx.send(ClientCommands::Log(format!("backing up all files modified since: {}", 
+                self.log_tx.send(Commands::Log(format!("backing up all files modified since: {}", 
                     match last_backup_time {
                         Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
                         None => "(NOW)".to_string()
@@ -194,13 +190,13 @@ impl eframe::App for ConfigApp {
 
             if ui.button("Stop Photo Client").clicked() {
                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
-                    self.log_tx.send(ClientCommands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
+                    self.log_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
                     return;
                 }
 
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
-                let _ = self.log_tx.send(ClientCommands::Log("Stopping Photo Client...".to_string()));
+                let _ = self.log_tx.send(Commands::Log("Stopping Photo Client...".to_string()));
 
                 if let Some(handle) = self.client_handle.take() {
                     let _ = handle.join();
@@ -220,10 +216,10 @@ impl eframe::App for ConfigApp {
 
         while let Ok(msg) = self.log_rx.try_recv() {
             match msg {
-                ClientCommands::Log(msg) => {
+                Commands::Log(msg) => {
                     self.log_messages.push(msg);
                 }
-                ClientCommands::CreateRepo(msg) => {
+                Commands::CreateRepo(msg) => {
 
                 }
             }
