@@ -1,6 +1,0 @@
-{
-  "server_address": "jacob-ubuntu:8080",
-  "watch_directory": "/home/jacob/Pictures",
-  "server_storage_directory": "./storage-server",
-  "recursive_backup": false
-}

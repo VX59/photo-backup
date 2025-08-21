@@ -9,7 +9,7 @@ mod filestreamserver;
 fn main() {
 
     // load the config
-    let config_path = PathBuf::from("photo-server-json.config");
+    let config_path = PathBuf::from("photo-server-config.json");
 
     if !config_path.exists() {
         if let Err(e) = std::fs::File::create(&config_path) {

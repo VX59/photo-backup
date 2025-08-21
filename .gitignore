@@ -5,5 +5,7 @@
 **/photo-server/storage-server/**
 **photo-client/storage-client/**
 /photo-client/last_backup.txt
+/photo-client/photo-client-config.json
+/photo-server/photo-server-config.json
 *.log
 *.tmp
