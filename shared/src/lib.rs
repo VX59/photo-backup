@@ -11,7 +11,6 @@ pub struct FileHeader {
     pub file_size: u64,
     pub file_ext: String,
     pub file_datetime: std::time::SystemTime,
-    pub file_dest: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -32,13 +31,6 @@ pub enum RequestTypes {
 pub struct Request {
     pub request_type:RequestTypes,
     pub body: Vec<u8>,
-}
-
-pub enum Commands {
-    Log(String),
-    CreateRepo(String),
-    PostRepos(Vec<String>),
-    StartStream(String),
 }
 
 pub fn read_response(stream:&mut TcpStream) -> Result<Response,std::io::Error> {

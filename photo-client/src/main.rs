@@ -4,12 +4,13 @@ use eframe;
 
 mod app;
 mod client;
+mod filestreamclient;
 
 use app::ConfigApp;
 use app::Config;
 use app::UiState;
 
-use shared::Commands;
+use crate::app::Commands;
 
 fn main() -> std::io::Result<()> {
     let config_path = PathBuf::from("photo-client-config.json");

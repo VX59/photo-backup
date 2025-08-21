@@ -1,8 +1,24 @@
 8/19/25
-
+#TODO
 when the server starts I want it to load a config file. the config contains existing repositories
 
 it should not just create a default directory. The client needs to choose which repository to connect to or create a new one.
 
 The server needs to receive commands on a seperate channel for a connected client. preferably it needs to move the connection to a different thread
 so that its able to accept another connection
+
+8/20/25
+Server and client launch seperate threads for file streaming on a seperate tcp connection
+you can connect to a repository on the server and stream files to it
+#TODO
+fix the server so the file streaming channel is only available to the connected client not anybody
+store the handles created by the file streaming threads so we can shut them down properly without crashing
+
+fix the ui so that the new repository and disconnect buttons are only visible when connected to the server
+make it so that the backup options are only available when connected to a repository
+add a button to enable/disable live file streaming
+fix the repository selection so that you cant lauch multiple client side streaming threads
+
+8/21/25
+Broke up the server and client streaming logic so that the streaming services exist in their own seperate data structures to improve code modularity
+implemented proper response send/read formatting for the file streaming server and file streaming client

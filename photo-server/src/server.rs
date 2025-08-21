@@ -1,16 +1,11 @@
 use std::{
-    io::{prelude::*, BufReader},
-    net::{TcpListener, TcpStream}, thread, time::Duration,
+net::{TcpListener, TcpStream}
 };
-
-use rand::{rng, Rng};
-use anyhow::Result;
+use rand::{Rng};
 use std::path::Path;
-use::bincode::{config};
-use::shared::FileHeader;
 use serde::Deserialize;
 use serde::Serialize;
-
+use crate::filestreamserver::{initiate_file_streaming_server};
 use shared::{read_request, send_response, RequestTypes, Response};
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
@@ -132,6 +127,7 @@ impl PhotoServer {
             
             let storage_directory_clone = self.storage_directory.clone();
             let mut config_clone = self.config.clone();
+            
             // spawn a request handler in a seperate thread so we can accept another connection
             let _ = std::thread::spawn(move || {
                 if let Err(e) = request_handler(storage_directory_clone, stream, &mut config_clone) {
@@ -193,7 +189,6 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                     .trim()         // removes leading/trailing whitespace
                     .replace(|c: char| c.is_control(), "_") // replace control chars with _
                     .to_string();                 
-                let repo_path = Path::new(&storage_directory).join(&repo_name);
 
                 let port = rand::rng().random_range(0..u16::MAX);
                 let file_stream_address = format!("0.0.0.0:{}", port);
@@ -208,81 +203,16 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
 
                 send_response(response, &mut stream)?;
 
-                match listener.accept() {
-                    Ok((mut file_stream, socket_addr)) => {
-                        let response = Response {
-                            status_code:200,
-                            status_message:"OK".to_string(),
-                            body: format!("{} connected to repository {}", socket_addr, repo_name).as_bytes().to_vec(),
-                        };
-
-                        send_response(response, &mut file_stream)?;
-
-                        // move the file stream to its own thread
-                        let file_stream_handle = std::thread::spawn(move || {
-                            println!("file stream thread initiated");
-                            photo_upload_handler(file_stream, repo_path.as_path());
-                        });
+                match initiate_file_streaming_server(repo_name, storage_directory.clone(), listener) {
+                    Ok(_handle) => { /* store the handle */ },
+                    Err(e) => {
+                        return Err(e);
                     },
-                    Err(e) => return Err(e),
-                }
+                };
             },
 
             RequestTypes::SetStoragePath => {},
         }
 
     }
-}
-
-fn photo_upload_handler(mut stream: TcpStream, file_dest: &Path) {
-    loop {
-        let mut reader = BufReader::new(&stream);
-        match upload_image(&mut reader, file_dest) {
-            Ok(file_name) => {
-                let response = format!("received {:?}: HTTP/1.1 200 OK\r\n", file_name);
-                if let Err(_e) = stream.write_all(response.as_bytes()) {
-                    println!("Failed to write response to stream");
-                    break;
-                }
-            }
-            Err(e) => {
-                println!("Connection closed or error: {:?}", e);
-                break;
-            }
-        }
-    }
-}
-
-fn upload_image(reader:&mut BufReader<&TcpStream>, file_dest: &Path) -> Result<String, anyhow::Error> {
-    let mut header_length_buffer = [0u8; 4];
-    // Read the request line
-
-    reader.read_exact(&mut header_length_buffer)?;
-
-    let header_length = u32::from_be_bytes(header_length_buffer);
-    println!("Header length: {}", header_length);
-    let mut header_bytes = vec![0u8; header_length as usize];
-
-    reader.read_exact(&mut header_bytes)?;
-    
-    let (file_header, _): (FileHeader, _) = bincode::decode_from_slice(&header_bytes, config::standard())?;
-
-    let mut image_bytes = vec![0u8; file_header.file_size as usize];
-    println!("Receiving file: {} ({} bytes)", file_header.file_name, file_header.file_size);
-
-    reader.read_exact(&mut image_bytes)?;
-
-    let image = image::load_from_memory(&image_bytes)?;
-
-    let image_path = file_dest.join(file_header.file_name);
-    if image_path.exists() {
-        // save it to the proper subdirectory.. triggered by recursive backup
-        if std::path::Path::new(&image_path).exists() == false {
-            std::fs::create_dir_all(&image_path)?;
-        }
-    }
-
-    image.save(std::path::Path::new(&image_path))?;
-    Ok(image_path.to_string_lossy().to_string())
-
 }

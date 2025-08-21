@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::io::Read;
 use egui::{Checkbox, RichText};
-use shared::Commands;
-
 pub struct ConfigApp {
     pub config: Config,
     pub config_path: PathBuf,
@@ -17,6 +15,13 @@ pub struct ConfigApp {
     pub app_tx: mpsc::Sender<Commands>,
     pub cli_tx: Option<mpsc::Sender<Commands>>,
     pub ui: UiState,
+}
+
+pub enum Commands {
+    Log(String),
+    CreateRepo(String),
+    PostRepos(Vec<String>),
+    StartStream(String),
 }
 
 pub struct UiState {
@@ -155,7 +160,6 @@ impl eframe::App for ConfigApp {
                     for repo in self.ui.available_repos.clone() {
                         if ui.button(&repo).clicked() {
                             if let Some(cli_tx) = &self.cli_tx {
-                                self.app_tx.send(Commands::Log(format!("Connecting to repository | {}", repo).to_string())).unwrap();
                                 cli_tx.send(Commands::StartStream(repo.to_string())).unwrap();
                             } else {
                                 self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();

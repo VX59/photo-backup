@@ -1,9 +1,10 @@
 use std::path::PathBuf;
-
 use hostname::get;
 use server::PhotoServer;
 use server::Config;
+
 mod server;
+mod filestreamserver;
 
 fn main() {
 
