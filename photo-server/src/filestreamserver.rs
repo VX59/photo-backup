@@ -11,8 +11,8 @@ pub fn initiate_file_streaming_server(repo_name:String, storage_directory: Strin
     match listener.accept() {
         Ok((mut file_stream, socket_addr)) => {
             
-            let response = Response {
-                status_code:200,
+            let response: Response = Response {
+                status_code:shared::ResponseCodes::OK,
                 status_message:"OK".to_string(),
                 body: format!("{} Connected to repository {}", socket_addr, repo_name).as_bytes().to_vec(),
             };
@@ -55,7 +55,7 @@ impl FileStreamServer {
             match self.upload_file(file_dest) {
                 Ok(file_name) => {
                     let response = Response {
-                        status_code:200,
+                        status_code:shared::ResponseCodes::OK,
                         status_message: "OK".to_string(),
                         body: format!("received {:?}", file_name).as_bytes().to_vec(),
                     };

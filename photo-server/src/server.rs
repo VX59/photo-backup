@@ -1,12 +1,12 @@
 use std::{
-collections::HashMap, hash::Hash, net::{TcpListener, TcpStream}
+collections::HashMap, net::{TcpListener, TcpStream}
 };
 use rand::{Rng};
 use std::path::Path;
 use serde::Deserialize;
 use serde::Serialize;
 use crate::filestreamserver::{initiate_file_streaming_server};
-use shared::{read_request, send_response, Request, RequestTypes, Response};
+use shared::{read_request, send_response, RequestTypes, Response, ResponseCodes};
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
@@ -77,7 +77,7 @@ impl PhotoServer {
             println!("New connection: {}", stream.peer_addr().expect("Failed to get peer address"));
 
             let response = Response {
-                status_code: 200,
+                status_code: ResponseCodes::OK,
                 status_message: "OK".to_string(),
                 body: format!("connected to photo server @ {}", self.name).as_bytes().to_vec(),
             };
@@ -93,7 +93,7 @@ impl PhotoServer {
             if storage_directory_path.exists() == false {
                 
                 let response = Response {
-                    status_code: 400,
+                    status_code: ResponseCodes::NotFound,
                     status_message: "Invalid path".to_string(),
                     body: "Closing connection due to invalid repository path.".as_bytes().to_vec(),
                 };
@@ -104,7 +104,7 @@ impl PhotoServer {
             }
             
             let response = Response {
-                status_code: 200,
+                status_code: ResponseCodes::OK,
                 status_message: "OK".to_string(),
                 body: format!("Global storage path confirmed {}", storage_directory_request_message).as_bytes().to_vec(),
             };
@@ -131,8 +131,7 @@ impl PhotoServer {
 fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut Config) -> std::io::Result<()>{
     println!("Launching a request handler");
 
-    let mut repo_threads: HashMap<String, std::thread::JoinHandle<()>> = HashMap::new();
-    let mut repo_stop_flags: HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>> = HashMap::new();
+    let mut repo_threads: HashMap<String, (std::thread::JoinHandle<()>, std::sync::Arc<std::sync::atomic::AtomicBool>)> = HashMap::new();
     loop {
         let request = read_request(&mut stream)?;
         match request.request_type {
@@ -141,7 +140,7 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
 
                 if config.repo_list.is_empty() {
                     response = Response {
-                        status_code: 300,
+                        status_code: ResponseCodes::Empty,
                         status_message: "Empty config".to_string(),
                         body: "There are no available repositories. The server will wait until you create one".as_bytes().to_vec(),
                     };
@@ -150,7 +149,7 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                     let available_repositories = &config.repo_list;
 
                     response  = Response {
-                        status_code: 200,
+                        status_code: ResponseCodes::OK,
                         status_message: "OK".to_string(),
                         body: serde_json::to_vec(&available_repositories)?,
                     };
@@ -169,19 +168,19 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
 
                 if repo_path.exists() {
                     response = Response {
-                      status_code: 500,
+                      status_code: ResponseCodes::Duplicate,
                       status_message: "Err".to_string(),
                       body: "A repo with the same name already exists".as_bytes().to_vec()
                     };
                 } else {
 
                     let mut response_message = format!("Successfully created new repository | {}", repo_name);
-                    let mut status_code = 200;
+                    let mut status_code = ResponseCodes::OK;
                     let mut status_message = "OK";
                     if let Err(e) = std::fs::create_dir(repo_path) {
                         response_message = e.to_string();
-                        status_code = 600;
-                        status_message = "Err";
+                        status_code = ResponseCodes::InternalError;
+                        status_message = "Failed to create the repo directory";
                     }
 
                     // save it to the config
@@ -208,7 +207,7 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                 let listener = TcpListener::bind(&file_stream_address)?;
                 
                 let response = Response {
-                    status_code:200,
+                    status_code:ResponseCodes::OK,
                     status_message: format!("Initiated file stream @ {}", &file_stream_address).to_string(),
                     body: file_stream_address.as_bytes().to_vec(),
                 };
@@ -216,13 +215,12 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                 send_response(response, &mut stream)?;
 
                 let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                repo_stop_flags.insert(repo_name.clone(), stop_flag.clone());
-                match initiate_file_streaming_server(repo_name.clone(), storage_directory.clone(), listener,stop_flag) {
+                match initiate_file_streaming_server(repo_name.clone(), storage_directory.clone(), listener,stop_flag.clone()) {
                     
-                    Ok(handle) => { repo_threads.insert(repo_name, handle) },
+                    Ok(handle) => { repo_threads.insert(repo_name,(handle, stop_flag)) },
                     Err(e) => {
                         let response = Response {
-                            status_code:200,
+                            status_code:ResponseCodes::OK,
                             status_message:"OK".to_string(),
                             body: format!("Failed to initiate repository {}", repo_name).as_bytes().to_vec(),
                         };
@@ -232,31 +230,26 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                     },
                 };
             },
+
             RequestTypes::DisconnectStream => {
                 let repo_name = String::from_utf8_lossy(&request.body)
                     .trim()         // removes leading/trailing whitespace
                     .replace(|c: char| c.is_control(), "_") // replace control chars with _
                     .to_string();            
-                
-
-                match repo_stop_flags.remove(&repo_name) {
-                    Some(stop_flag) => {
-                        stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                    },
-                    None => {}
-                }
 
                 let response:Response = match repo_threads.remove(&repo_name) {
-                    Some(handle) => {
+                    Some((handle, stop_flag)) => {
+                        stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        
                         if let Err(_e) = handle.join() {
                             Response { 
-                                status_code: 400, 
+                                status_code: ResponseCodes::InternalError, 
                                 status_message: "Err".to_string(),
                                 body: format!("{} server thread failed to terminate", repo_name).as_bytes().to_vec(),
                             }
                         } else {
                             Response { 
-                                status_code: 200, 
+                                status_code: ResponseCodes::OK, 
                                 status_message: "OK".to_string(),
                                 body: format!("Successfully disconnected from {}", repo_name).as_bytes().to_vec(),
                             }
@@ -264,7 +257,7 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                     },
                     None => {
                         Response { 
-                            status_code: 300, 
+                            status_code: ResponseCodes::NotFound, 
                             status_message: "Err".to_string(),
                             body: format!("{} server thread failed to terminate : not found", repo_name).as_bytes().to_vec(),
                         }
