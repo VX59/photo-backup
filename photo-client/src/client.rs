@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::thread::JoinHandle;
 use shared::send_request;
 use shared::RequestTypes;
+use shared::ResponseCodes;
 use std::io;
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -16,8 +17,7 @@ pub struct ImageClient {
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     config: Config,
     command_stream: Option<TcpStream>,
-    repo_threads: HashMap<String, std::thread::JoinHandle<()>>,
-    repo_stop_flags: HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>>
+    repo_threads: HashMap<String, (std::thread::JoinHandle<()>,std::sync::Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 impl ImageClient {
@@ -32,7 +32,6 @@ impl ImageClient {
             config,
             command_stream: None,
             repo_threads: HashMap::new(),
-            repo_stop_flags: HashMap::new(),
         }
     }
 
@@ -66,7 +65,6 @@ impl ImageClient {
                     let response_code = response.status_code;
                     
                     self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
-
                     self.get_repositories()?;
                 }
                 
@@ -81,25 +79,19 @@ impl ImageClient {
                                 Commands::StartStream(repo) => {
 
                                     // request a file streaming channel - the server will open another port
-                                    let file_streaming_client_handle = self.initiate_file_streaming_client(repo.to_string())?;
-                                    self.repo_threads.insert(repo, file_streaming_client_handle);
+                                    let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                                    let file_streaming_client_handle = self.initiate_file_streaming_client(repo.to_string(), stop_flag.clone())?;
+
+                                    self.repo_threads.insert(repo, (file_streaming_client_handle, stop_flag));
                                 }
                                 Commands::DisconnectStream(repo) => {
                                     println!("disconnecting from the repo");
 
-                                    match self.repo_stop_flags.remove(&repo) {
-                                        Some(stop_flag) => {
+                                    match self.repo_threads.remove(&repo) {
+                                        Some((handle,stop_flag)) => {
                                             stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                                             self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string())).unwrap();
 
-                                        },
-                                        None => {
-                                            self.app_tx.send(Commands::Log(format!("Not connected to {}", repo).to_string())).unwrap();
-                                        }
-                                    }
-
-                                    match self.repo_threads.remove(&repo) {
-                                        Some(handle) => {
                                             if let Err(_e) = handle.join() {
                                                 self.app_tx.send(Commands::Log(format!("{} client thread failed to join", repo).to_string())).unwrap();
                                             }
@@ -135,11 +127,14 @@ impl ImageClient {
                 if let Some(stream) = self.command_stream.as_mut() {
                     stream.shutdown(std::net::Shutdown::Both).ok();
                 }
-                self.command_stream.take();
                 self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
 
             },
-            Err(e) => self.app_tx.send(Commands::Log(format!("error {}",e).to_string())).unwrap(),
+            Err(e) => {
+                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
+                self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                return Err(anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::Other, e)));
+            },
         }
         Ok(())
     }
@@ -156,7 +151,7 @@ impl ImageClient {
             let response_message = String::from_utf8_lossy(&response.body);
             let response_code = response.status_code;
 
-            if response_code == 200 {
+            if response_code == ResponseCodes::OK {
                 // send the repo list to the app
                 let available_repositories:Vec<String> = serde_json::from_slice(&response.body)?;
                 self.app_tx.send(Commands::PostRepos(available_repositories)).unwrap();
@@ -170,7 +165,7 @@ impl ImageClient {
         Ok(())
     }
 
-    pub fn initiate_file_streaming_client(&mut self, repo:String) -> io::Result<JoinHandle<()>> {
+    pub fn initiate_file_streaming_client(&mut self, repo:String, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<JoinHandle<()>> {
         if let Some(stream) = self.command_stream.as_mut() {
             let request = Request {
                 request_type: RequestTypes::StartStream,
@@ -197,10 +192,7 @@ impl ImageClient {
 
             let config_clone = self.config.clone();
             let app_tx_clone = self.app_tx.clone();
-            let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let stop_flag_clone = stop_flag.clone();
-
-            self.repo_stop_flags.insert(repo, stop_flag);
 
             return Ok(std::thread::spawn(move || {
                 let mut file_stream_client = FileStreamClient::new(file_stream, config_clone, app_tx_clone, stop_flag_clone);
@@ -227,7 +219,7 @@ impl ImageClient {
             let response_message = String::from_utf8_lossy(&response.body);
             let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message))).unwrap();
 
-            if response.status_code == 200 {
+            if response.status_code == ResponseCodes::OK {
                 self.get_repositories()?;
             }
         }

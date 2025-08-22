@@ -80,7 +80,7 @@ impl FileStreamClient {
         }
 
         self.stream.shutdown(std::net::Shutdown::Both).ok();
-        self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
+        self.app_tx.send(Commands::Log("Repo client stopped.".to_string())).ok();
 
         Ok(())
     }

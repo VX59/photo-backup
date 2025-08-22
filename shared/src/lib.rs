@@ -5,6 +5,7 @@ use bincode::{Decode, Encode};
 use serde::Deserialize;
 use serde::Serialize;
 use anyhow::Result;
+
 #[derive(Debug, Encode, Decode)]
 pub struct FileHeader {
     pub file_name: String,
@@ -13,9 +14,32 @@ pub struct FileHeader {
     pub file_datetime: std::time::SystemTime,
 }
 
+#[derive(Serialize, Deserialize, PartialEq)]
+pub enum ResponseCodes {
+    OK,
+    NotFound,
+    Empty,
+    NotConnected,
+    InternalError,
+    Duplicate,
+}
+
+impl std::fmt::Display for ResponseCodes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseCodes::OK => write!(f, "OK"),
+            ResponseCodes::NotFound => write!(f, "Not Found"),
+            ResponseCodes::Empty => write!(f, "Empty"),
+            ResponseCodes::NotConnected => write!(f,"Not Connected"),
+            ResponseCodes::InternalError => write!(f, "Internal Server Error"),
+            ResponseCodes::Duplicate => write!(f, "Duplicate"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Response {
-    pub status_code: u16,
+    pub status_code: ResponseCodes,
     pub status_message: String,
     pub body: Vec<u8>,
 }
