@@ -23,8 +23,10 @@ pub struct Response {
 #[derive(Serialize, Deserialize)]
 pub enum RequestTypes {
     CreateRepo,
+    GetRepos,
     SetStoragePath,
     StartStream,
+    DisconnectStream,
 }
 
 #[derive(Serialize, Deserialize)]

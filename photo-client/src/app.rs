@@ -22,6 +22,7 @@ pub enum Commands {
     CreateRepo(String),
     PostRepos(Vec<String>),
     StartStream(String),
+    DisconnectStream(String),
 }
 
 pub struct UiState {
@@ -29,6 +30,7 @@ pub struct UiState {
     pub show_repos: bool,
     pub available_repos: Vec<String>,
     pub new_repo_name: String,
+    pub selected_repo: Option<usize>,
 }
 
 impl Default for UiState {
@@ -38,6 +40,7 @@ impl Default for UiState {
             show_repos: false,
             available_repos: vec![],
             new_repo_name: String::new(),
+            selected_repo: None,
         }
     }
 }
@@ -105,13 +108,6 @@ impl eframe::App for ConfigApp {
             ui.separator();
             ui.heading("Photo Client Control");
 
-            if ui.button("New Repository").clicked() {
-                self.ui.show_create_ui = !self.ui.show_create_ui;
-                if !self.ui.show_create_ui {
-                    self.ui.new_repo_name.clear();
-                }
-            }
-
             if self.ui.show_create_ui {
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut self.ui.new_repo_name);
@@ -154,61 +150,6 @@ impl eframe::App for ConfigApp {
                     self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
                 }  
             }
-            
-            if self.ui.show_repos {
-                ui.horizontal(|ui| {
-                    for repo in self.ui.available_repos.clone() {
-                        if ui.button(&repo).clicked() {
-                            if let Some(cli_tx) = &self.cli_tx {
-                                cli_tx.send(Commands::StartStream(repo.to_string())).unwrap();
-                            } else {
-                                self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
-                            }
-                        }
-                    }
-                });
-            }
-
-            ui.add(Checkbox::new(&mut self.config.recursive_backup, RichText::new("Enable Recursive Backup").italics()));
-
-            if ui.button("Backup Now").clicked() {
-                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) == true{
-                    self.app_tx.send(Commands::Log("Photo Client is not running. Start the client before backing up.".to_string())).unwrap();
-                    return;
-                }
-
-
-                let fmt = "%Y-%m-%d %H:%M:%S%.f %:z";
-                let f = std::fs::File::open("./last_backup.txt");
-                let last_backup_time = match f {
-                    Ok(mut file) => {
-                        let mut contents = String::new();
-                        if let Some(_) = file.read_to_string(&mut contents).ok() {
-                            match chrono::DateTime::parse_from_str(contents.trim(), fmt) {
-                                Ok(dt) => Some(dt.with_timezone(&chrono::Local)),
-                                Err(_) => {
-                                    self.app_tx.send(Commands::Log("Failed to parse last backup time. Using (NOW)".to_string())).unwrap();
-                                    None
-                                }
-                            }
-                        } else {
-                            self.app_tx.send(Commands::Log("Failed to read last backup time. Using (NOW)".to_string())).unwrap();
-                            None
-                        }
-                    }
-                    Err(_) => {
-                        self.app_tx.send(Commands::Log("No previous backup time found".to_string())).unwrap();
-                        chrono::Local::now().checked_sub_signed(chrono::Duration::seconds(1))
-                    }
-                };
-
-                self.app_tx.send(Commands::Log(format!("backing up all files modified since: {}", 
-                    match last_backup_time {
-                        Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
-                        None => "(NOW)".to_string()
-                    }
-                ))).unwrap();
-            }
 
             if ui.button("Stop Photo Client").clicked() {
                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
@@ -230,6 +171,102 @@ impl eframe::App for ConfigApp {
             }
 
             ui.separator();
+
+if self.ui.show_repos {
+                
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("Repositories");
+                        for (i,repo) in self.ui.available_repos.iter().enumerate() {
+                            let selected = self.ui.selected_repo == Some(i);
+                            if ui.selectable_label(selected,repo).clicked() {
+                                /**/
+                               self.ui.selected_repo = Some(i)
+                            }
+                        }
+                        if ui.button("New Repository").clicked() {
+                            self.ui.show_create_ui = !self.ui.show_create_ui;
+                            if !self.ui.show_create_ui {
+                                self.ui.new_repo_name.clear();
+                            }
+                        }
+                    });
+
+                    ui.separator();
+
+                    ui.vertical(|ui| {
+                        if let Some(i) = self.ui.selected_repo {
+                            let repo_name = &self.ui.available_repos[i];
+                            ui.heading(repo_name);
+                            // status here ...
+
+                            if ui.button("Connect").clicked() {
+                                if let Some(cli_tx) = &self.cli_tx {
+                                    cli_tx.send(Commands::StartStream(repo_name.to_string())).unwrap();
+                                } else {
+                                    self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
+                                }
+                            }
+
+                            ui.add(Checkbox::new(&mut self.config.recursive_backup, RichText::new("Enable Recursive Backup").italics()));
+                            if ui.button("Backup Now").clicked() {
+                                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) == true{
+                                    self.app_tx.send(Commands::Log("Photo Client is not running. Start the client before backing up.".to_string())).unwrap();
+                                    return;
+                                }
+
+
+                                let fmt = "%Y-%m-%d %H:%M:%S%.f %:z";
+                                let f = std::fs::File::open("./last_backup.txt");
+                                let last_backup_time = match f {
+                                    Ok(mut file) => {
+                                        let mut contents = String::new();
+                                        if let Some(_) = file.read_to_string(&mut contents).ok() {
+                                            match chrono::DateTime::parse_from_str(contents.trim(), fmt) {
+                                                Ok(dt) => Some(dt.with_timezone(&chrono::Local)),
+                                                Err(_) => {
+                                                    self.app_tx.send(Commands::Log("Failed to parse last backup time. Using (NOW)".to_string())).unwrap();
+                                                    None
+                                                }
+                                            }
+                                        } else {
+                                            self.app_tx.send(Commands::Log("Failed to read last backup time. Using (NOW)".to_string())).unwrap();
+                                            None
+                                        }
+                                    }
+                                    Err(_) => {
+                                        self.app_tx.send(Commands::Log("No previous backup time found".to_string())).unwrap();
+                                        chrono::Local::now().checked_sub_signed(chrono::Duration::seconds(1))
+                                    }
+                                };
+
+                                self.app_tx.send(Commands::Log(format!("backing up all files modified since: {}", 
+                                    match last_backup_time {
+                                        Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                        None => "(NOW)".to_string()
+                                    }
+                                ))).unwrap();
+                            }
+
+                            if ui.button("Disconnect").clicked() {
+                                if let Some(cli_tx) = &self.cli_tx {
+                                    cli_tx.send(Commands::DisconnectStream(repo_name.to_string())).unwrap();
+                                } else {
+                                    self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
+                                }
+                            }
+                            
+                            if ui.button("Remove Repository").clicked() {
+                                
+                            }
+                        } else {
+                            ui.label("Select a repository to see more details");
+                        }
+                    });
+                });
+                ui.separator();
+            }
+
             ui.heading("Log Messages:");
             for msg in &self.log_messages {
                 ui.label(msg);

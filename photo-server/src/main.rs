@@ -18,11 +18,14 @@ fn main() {
     }
 
     let name = get().unwrap_or_default().to_string_lossy().to_string(); // gets the servers hostname dynamically
+    let mut config = Config::load_from_file(config_path.to_str().unwrap());
+    config.path = "photo-server-config.json".to_string();
+    
     let mut photo_server = PhotoServer::new(
         name.clone(),
         format!("{}:{}", name, "8080"),
         "./storage-server".to_string(),
-        Config::load_from_file(config_path.to_str().unwrap())
+        config
     );
 
     if let Err(e) = photo_server.start() {

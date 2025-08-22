@@ -7,7 +7,7 @@ use::bincode::{config};
 use::shared::FileHeader;
 use shared::{send_response, Response};
 
-pub fn initiate_file_streaming_server(repo_name:String, storage_directory: String, listener:TcpListener) -> std::io::Result<JoinHandle<()>>{   
+pub fn initiate_file_streaming_server(repo_name:String, storage_directory: String, listener:TcpListener, stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<JoinHandle<()>>{   
     match listener.accept() {
         Ok((mut file_stream, socket_addr)) => {
             
@@ -22,8 +22,6 @@ pub fn initiate_file_streaming_server(repo_name:String, storage_directory: Strin
             // move the file stream to its own thread
             return Ok(std::thread::spawn(move || {
                 println!("file stream thread initiated");
-
-                let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 
                 let mut file_stream_server = FileStreamServer::new(repo_name, storage_directory, file_stream, stop_flag);
                 let repo_path = Path::new(&file_stream_server.storage_directory).join(&file_stream_server.repo_name);

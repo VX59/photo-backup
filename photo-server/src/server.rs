@@ -1,16 +1,17 @@
 use std::{
-net::{TcpListener, TcpStream}
+collections::HashMap, hash::Hash, net::{TcpListener, TcpStream}
 };
 use rand::{Rng};
 use std::path::Path;
 use serde::Deserialize;
 use serde::Serialize;
 use crate::filestreamserver::{initiate_file_streaming_server};
-use shared::{read_request, send_response, RequestTypes, Response};
+use shared::{read_request, send_response, Request, RequestTypes, Response};
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
-pub repo_list: Vec<String>,
+    pub repo_list: Vec<String>,
+    pub path: String,
 }
 
 pub struct PhotoServer {
@@ -42,10 +43,10 @@ impl Config {
         }   
     }
 
-    pub fn add_repo(&mut self, repo:String, path: &str) {
+    pub fn add_repo(&mut self, repo:String) {
         if !self.repo_list.contains(&repo) {
             self.repo_list.push(repo);
-            self.save_to_file(path);
+            self.save_to_file(&self.path);
         } else {
             eprintln!("Repo already exists in config.");
         }
@@ -75,7 +76,7 @@ impl PhotoServer {
 
             println!("New connection: {}", stream.peer_addr().expect("Failed to get peer address"));
 
-            let mut response = Response {
+            let response = Response {
                 status_code: 200,
                 status_message: "OK".to_string(),
                 body: format!("connected to photo server @ {}", self.name).as_bytes().to_vec(),
@@ -100,27 +101,13 @@ impl PhotoServer {
                 send_response(response, &mut stream)?;
                 drop(stream);
                 continue;
-            } 
-
-            // load available repositories
-
-            if self.config.repo_list.is_empty() {
-                response = Response {
-                    status_code: 300,
-                    status_message: "Empty config".to_string(),
-                    body: "There are no available repositories. The server will wait until you create one".as_bytes().to_vec(),
-                };
-
-            } else {
-                let available_repositories = &self.config.repo_list;
-
-                response  = Response {
-                    status_code: 200,
-                    status_message: "OK".to_string(),
-                    body: serde_json::to_vec(&available_repositories)?,
-                };
             }
             
+            let response = Response {
+                status_code: 200,
+                status_message: "OK".to_string(),
+                body: format!("Global storage path confirmed {}", storage_directory_request_message).as_bytes().to_vec(),
+            };
             send_response(response, &mut stream)?;
             
             self.storage_directory = storage_directory_request_message.to_string();
@@ -143,9 +130,34 @@ impl PhotoServer {
 
 fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut Config) -> std::io::Result<()>{
     println!("Launching a request handler");
+
+    let mut repo_threads: HashMap<String, std::thread::JoinHandle<()>> = HashMap::new();
+    let mut repo_stop_flags: HashMap<String, std::sync::Arc<std::sync::atomic::AtomicBool>> = HashMap::new();
     loop {
         let request = read_request(&mut stream)?;
         match request.request_type {
+            RequestTypes::GetRepos => {
+                let response:Response;
+
+                if config.repo_list.is_empty() {
+                    response = Response {
+                        status_code: 300,
+                        status_message: "Empty config".to_string(),
+                        body: "There are no available repositories. The server will wait until you create one".as_bytes().to_vec(),
+                    };
+
+                } else {
+                    let available_repositories = &config.repo_list;
+
+                    response  = Response {
+                        status_code: 200,
+                        status_message: "OK".to_string(),
+                        body: serde_json::to_vec(&available_repositories)?,
+                    };
+                }
+                
+                send_response(response, &mut stream)?;
+            }
             RequestTypes::CreateRepo => {
                 let repo_name = String::from_utf8_lossy(&request.body)
                     .trim()         // removes leading/trailing whitespace
@@ -173,7 +185,7 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
                     }
 
                     // save it to the config
-                    config.add_repo(repo_name, "photo-server-json.config");
+                    config.add_repo(repo_name);
 
                     response = Response {
                         status_code: status_code,
@@ -203,15 +215,66 @@ fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut
 
                 send_response(response, &mut stream)?;
 
-                match initiate_file_streaming_server(repo_name, storage_directory.clone(), listener) {
-                    Ok(_handle) => { /* store the handle */ },
+                let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                repo_stop_flags.insert(repo_name.clone(), stop_flag.clone());
+                match initiate_file_streaming_server(repo_name.clone(), storage_directory.clone(), listener,stop_flag) {
+                    
+                    Ok(handle) => { repo_threads.insert(repo_name, handle) },
                     Err(e) => {
+                        let response = Response {
+                            status_code:200,
+                            status_message:"OK".to_string(),
+                            body: format!("Failed to initiate repository {}", repo_name).as_bytes().to_vec(),
+                        };
+
+                        send_response(response, &mut stream)?;
                         return Err(e);
                     },
                 };
             },
+            RequestTypes::DisconnectStream => {
+                let repo_name = String::from_utf8_lossy(&request.body)
+                    .trim()         // removes leading/trailing whitespace
+                    .replace(|c: char| c.is_control(), "_") // replace control chars with _
+                    .to_string();            
+                
 
-            RequestTypes::SetStoragePath => {},
+                match repo_stop_flags.remove(&repo_name) {
+                    Some(stop_flag) => {
+                        stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    },
+                    None => {}
+                }
+
+                let response:Response = match repo_threads.remove(&repo_name) {
+                    Some(handle) => {
+                        if let Err(_e) = handle.join() {
+                            Response { 
+                                status_code: 400, 
+                                status_message: "Err".to_string(),
+                                body: format!("{} server thread failed to terminate", repo_name).as_bytes().to_vec(),
+                            }
+                        } else {
+                            Response { 
+                                status_code: 200, 
+                                status_message: "OK".to_string(),
+                                body: format!("Successfully disconnected from {}", repo_name).as_bytes().to_vec(),
+                            }
+                        }
+                    },
+                    None => {
+                        Response { 
+                            status_code: 300, 
+                            status_message: "Err".to_string(),
+                            body: format!("{} server thread failed to terminate : not found", repo_name).as_bytes().to_vec(),
+                        }
+                    }
+                };
+
+                send_response(response, &mut stream)?;
+            },
+
+            _ => {},
         }
 
     }
