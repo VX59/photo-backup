@@ -17,10 +17,15 @@ fn main() -> std::io::Result<()> {
 
     let (tx, rx) = mpsc::channel::<Commands>();
 
+    if std::path::Path::new("output.log").exists() {
+        let file = std::fs::File::options().write(true).open("output.log")?;
+        file.set_len(0)?;
+    }
+
     let app = ConfigApp {
         config: Config::load_from_file(config_path.to_str().unwrap()),
         config_path,
-        log_messages: Vec::new(),
+        log_file: std::fs::File::create("output.log")?,
         client_handle: None,
         stop_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         app_rx: rx,

@@ -1,14 +1,15 @@
+use egui::ahash::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::io::Read;
-use egui::{Checkbox, RichText};
+use std::io::{Read,Write};
+use egui::{Color32, Stroke, RichText, Frame, Checkbox};
 pub struct ConfigApp {
     pub config: Config,
     pub config_path: PathBuf,
-    pub log_messages: Vec<String>,
+    pub log_file: std::fs::File,
     pub client_handle: Option<std::thread::JoinHandle<()>>,
     pub stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub app_rx: Receiver<Commands>,
@@ -21,26 +22,50 @@ pub enum Commands {
     Log(String),
     CreateRepo(String),
     PostRepos(Vec<String>),
+    UpdateRepoStatus((String, ConnectionStatus)),
     StartStream(String),
     DisconnectStream(String),
+    UpdateConnectionStatus(ConnectionStatus),
+}
+
+#[derive(PartialEq)]
+pub enum ConnectionStatus {
+    Connected,
+    Connecting,
+    Disconnected,
+    Disconnecting
+}
+
+impl std::fmt::Display for ConnectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionStatus::Connected => write!(f, "Connected"),
+            ConnectionStatus::Connecting => write!(f, "Connecting"),
+            ConnectionStatus::Disconnected => write!(f, "Disconnected"),
+            ConnectionStatus::Disconnecting => write!(f, "Disconnected"),
+
+        }
+    }
 }
 
 pub struct UiState {
     pub show_create_ui: bool,
     pub show_repos: bool,
-    pub available_repos: Vec<String>,
     pub new_repo_name: String,
     pub selected_repo: Option<usize>,
+    pub connection_status: ConnectionStatus,
+    pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
 }
 
 impl Default for UiState {
     fn default() -> Self {
         Self {
+            connection_status: ConnectionStatus::Disconnected,
             show_create_ui: false,
             show_repos: false,
-            available_repos: vec![],
             new_repo_name: String::new(),
             selected_repo: None,
+            repo_status: std::collections::HashMap::new(),
         }
     }
 }
@@ -73,113 +98,104 @@ impl Config {
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
     pub server_address: String,
-    pub watch_directory: String,
     pub server_storage_directory: String,
     pub recursive_backup: bool,
+    pub watch_directory: HashMap<String, String>,
 }
 
 impl eframe::App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Photo Client Configuration");
 
+            let status_color = match self.ui.connection_status {
+                ConnectionStatus::Connected => Color32::GREEN,
+                ConnectionStatus::Disconnected => Color32::GRAY,
+                ConnectionStatus::Connecting | ConnectionStatus::Disconnecting => Color32::ORANGE, 
+            };
+
+            ui.horizontal(|ui| {
+                ui.heading("Photo Server Configuration");
+                let badge_frame = Frame::none()
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(egui::Stroke::new(2.0,status_color))
+                    .rounding(egui::Rounding::same(4));
+
+                badge_frame.show(ui, |ui| {
+                    ui.label(
+                        RichText::new(format!("{}",self.ui.connection_status))
+                            .color(status_color)
+                            .strong(),
+                    );
+                });
+
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                    
+                    ui.vertical(|ui| {
+                        if self.ui.connection_status == ConnectionStatus::Connected {
+                            if ui.button("Disconnect").clicked() {
+                                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
+                                    self.app_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
+                                    return;
+                                }
+                                self.ui.show_repos = false;
+                                self.ui.connection_status = ConnectionStatus::Disconnecting;
+                                self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+
+                                let _ = self.app_tx.send(Commands::Log("Stopping Photo Client...".to_string()));
+
+                                if let Some(handle) = self.client_handle.take() {
+                                    let _ = handle.join();
+                                }
+                            }
+                        }
+
+                        if self.ui.connection_status == ConnectionStatus::Disconnected {
+                            if ui.button("Connect to server").clicked() {
+                                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                    self.ui.connection_status = ConnectionStatus::Connecting;
+                                    self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
+                                    self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                                
+                                    let log_tx_clone = self.app_tx.clone();
+                                    let stop_flag_clone = self.stop_flag.clone();
+
+                                    let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
+                                    self.cli_tx = Some(cmd_tx.clone());
+
+                                    self.client_handle = Some(std::thread::spawn(move || {
+                                        let mut client = ImageClient::new(log_tx_clone, cmd_rx, stop_flag_clone);
+                                        if let Err(e) = client.connect() {
+                                        client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
+                                        }
+                                    }));
+                                } else {
+                                    self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
+                                }  
+                            }
+                        }
+
+                        if ui.button("Save Configuration").clicked() {
+                            self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
+                            self.config.save_to_file(self.config_path.to_str().unwrap());
+                        }
+                    });
+                });
+            });            
             ui.label("Server Address:");
             ui.text_edit_singleline(&mut self.config.server_address);
-
-            ui.label("Watch Directory:");
-            ui.text_edit_singleline(&mut self.config.watch_directory);
-
-            ui.separator();
-            ui.heading("Photo Server Configuration");
-
             ui.label("Global storage path on Server:");
             ui.text_edit_singleline(&mut self.config.server_storage_directory);
 
-            if ui.button("Save Configuration").clicked() {
-                self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-
-                // check if the monitored path exists
-                if !std::path::Path::new(&self.config.watch_directory).exists() {
-                    self.app_tx.send(Commands::Log("Watch directory is not a valid path.".to_string())).unwrap();
-                }
-                self.config.save_to_file(self.config_path.to_str().unwrap());
-            }
-
-            ui.separator();
-            ui.heading("Photo Client Control");
-
-            if self.ui.show_create_ui {
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.ui.new_repo_name);
-
-                    if ui.button("Create").clicked() {
-
-                        if let Some(cli_tx) = &self.cli_tx {
-                            self.app_tx.send(Commands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
-                            cli_tx.send(Commands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
-                            
-                        } else {
-                            self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
-                        }
-                        
-                        self.ui.new_repo_name.clear();
-                        self.ui.show_create_ui = false;
-                    }
-                });
-            }
-
-            // opens the command channel.. once a repository is open open a seperate streaming channel
-            if ui.button("Connect to server").clicked() {
-                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
-                    self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-                
-                    let log_tx_clone = self.app_tx.clone();
-                    let stop_flag_clone = self.stop_flag.clone();
-
-                    let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
-                    self.cli_tx = Some(cmd_tx.clone());
-
-                    self.client_handle = Some(std::thread::spawn(move || {
-                        let mut client = ImageClient::new(log_tx_clone, cmd_rx, stop_flag_clone);
-                        if let Err(e) = client.connect() {
-                           client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
-                        }
-                    }));
-                } else {
-                    self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
-                }  
-            }
-
-            if ui.button("Stop Photo Client").clicked() {
-                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
-                    self.app_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
-                    return;
-                }
-
-                self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-
-                let _ = self.app_tx.send(Commands::Log("Stopping Photo Client...".to_string()));
-
-                if let Some(handle) = self.client_handle.take() {
-                    let _ = handle.join();
-                }
-            }
-            
-            if ui.button("Clear Log").clicked() {
-                self.log_messages.clear();
-            }
-
-            ui.separator();
-
-if self.ui.show_repos {
-                
+            if self.ui.show_repos {
+                ui.separator();
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
                         ui.heading("Repositories");
-                        for (i,repo) in self.ui.available_repos.iter().enumerate() {
+
+                        let repo_names:Vec<&String> = self.ui.repo_status.keys().collect();
+                        for (i,repo) in repo_names.iter().enumerate() {
                             let selected = self.ui.selected_repo == Some(i);
-                            if ui.selectable_label(selected,repo).clicked() {
+                            if ui.selectable_label(selected,*repo).clicked() {
                                 /**/
                                self.ui.selected_repo = Some(i)
                             }
@@ -190,17 +206,72 @@ if self.ui.show_repos {
                                 self.ui.new_repo_name.clear();
                             }
                         }
+                        if self.ui.show_create_ui {
+                            ui.horizontal(|ui| {
+                                ui.text_edit_singleline(&mut self.ui.new_repo_name);
+
+                                if ui.button("Create").clicked() {
+
+                                    if let Some(cli_tx) = &self.cli_tx {
+                                        self.app_tx.send(Commands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
+                                        cli_tx.send(Commands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
+                                        
+                                    } else {
+                                        self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
+                                    }
+                                    
+                                    self.ui.new_repo_name.clear();
+                                    self.ui.show_create_ui = false;
+                                }
+                            });
+                        }
                     });
 
                     ui.separator();
 
                     ui.vertical(|ui| {
                         if let Some(i) = self.ui.selected_repo {
-                            let repo_name = &self.ui.available_repos[i];
-                            ui.heading(repo_name);
-                            // status here ...
+                            let repo_names: Vec<String> = self.ui.repo_status.keys().cloned().collect();
+                            let repo_name = repo_names[i].clone();
+                            
+                            let status_text = match self.ui.repo_status.get(&repo_name) {
+                                Some(status) => format!("{}", status),
+                                None => "Unknown".to_string(),
+                            };
+
+                            let status_color = match self.ui.repo_status.get(&repo_name) {
+                                Some(ConnectionStatus::Connected) => Color32::GREEN,
+                                Some(ConnectionStatus::Disconnected) => Color32::GRAY,
+                                Some(_) => Color32::ORANGE,
+                                None => Color32::LIGHT_GRAY,
+                            };
+
+                            ui.horizontal(|ui| {
+                                ui.heading(repo_name.clone());
+                                let badge_frame = Frame::none()
+                                    .fill(Color32::TRANSPARENT)
+                                    .stroke(egui::Stroke::new(2.0,status_color))
+                                    .rounding(egui::Rounding::same(4));
+
+                                badge_frame.show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new(status_text)
+                                            .color(status_color)
+                                            .strong(),
+                                    );
+                                });
+                            });
+
+                            ui.label("Watch Directory:");
+
+                            let path = self.config.watch_directory
+                                .entry(repo_name.clone())
+                                .or_insert_with(|| "".to_string());
+
+                            ui.text_edit_singleline(path);
 
                             if ui.button("Connect").clicked() {
+                                self.ui.repo_status.insert(repo_name.to_string(), ConnectionStatus::Connecting);
                                 if let Some(cli_tx) = &self.cli_tx {
                                     cli_tx.send(Commands::StartStream(repo_name.to_string())).unwrap();
                                 } else {
@@ -249,6 +320,8 @@ if self.ui.show_repos {
                             }
 
                             if ui.button("Disconnect").clicked() {
+
+                                self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
                                 if let Some(cli_tx) = &self.cli_tx {
                                     cli_tx.send(Commands::DisconnectStream(repo_name.to_string())).unwrap();
                                 } else {
@@ -266,22 +339,29 @@ if self.ui.show_repos {
                 });
                 ui.separator();
             }
-
-            ui.heading("Log Messages:");
-            for msg in &self.log_messages {
-                ui.label(msg);
-            }
         });
 
+        
         while let Ok(msg) = self.app_rx.try_recv() {
             match msg {
                 Commands::Log(msg) => {
-                    self.log_messages.push(msg);
+                    writeln!(self.log_file, "{}", msg).ok();
                 }
                 Commands::PostRepos(repos) => {
                     self.ui.show_repos = true;
-                    self.ui.available_repos = repos;
+                    
+                    self.ui.repo_status.clear();
+                    for repo in repos {
+                        self.ui.repo_status.insert(repo, ConnectionStatus::Disconnected);
+                    }
                 }
+
+                Commands::UpdateRepoStatus((repo,status)) => {
+                    self.ui.repo_status.insert(repo, status);
+                }
+
+                Commands::UpdateConnectionStatus(status) => self.ui.connection_status = status,
+
                 _ => {},
             }
         }

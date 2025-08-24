@@ -9,14 +9,15 @@ use bincode::config;
 use image::ImageReader;
 use chrono;
 use bincode::encode_into_slice;
-use std::io;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use crate::app::{Commands, Config};
-use shared::{read_response};
+use shared::{read_response, Response};
 use std::sync::mpsc;
+use crate::client::{ Log};
 
 pub struct FileStreamClient {
+    name:String,
     stream:TcpStream,
     config:Config,
     pub app_tx:mpsc::Sender<Commands>,
@@ -24,8 +25,9 @@ pub struct FileStreamClient {
 }
 
 impl FileStreamClient {
-    pub fn new(stream:TcpStream, config:Config, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(name:String, stream:TcpStream, config:Config, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         FileStreamClient { 
+            name,
             stream,
             config,
             app_tx,
@@ -33,21 +35,25 @@ impl FileStreamClient {
         }
     }
 
-    pub fn run(&mut self) -> io::Result<()> {
+    pub fn run(&mut self) -> anyhow::Result<()> {
         let (wtx, wrx) = channel();
         let mut watcher = match RecommendedWatcher::new(move |res| wtx.send(res).unwrap(), notify::Config::default())
             {
         Ok(w) => w,
         Err(e) => {
             eprintln!("Failed to create file watcher: {}", e);
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to create file watcher"));
+            return Err(anyhow::anyhow!("Failed to create file watcher"));
             }
         };
 
-        if let Err(e) = watcher.watch(Path::new(self.config.watch_directory.as_str()), RecursiveMode::Recursive) {
-            eprintln!("Failed to watch directory: {}", e);
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to watch directory"));
+        if let Some(path) = self.config.watch_directory.get(&self.name) {
+            if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::Recursive) {
+                return Err(anyhow::anyhow!("Failed to watch directory: {} {}",path, e));
+            }
+        } else {
+            return Err(anyhow::anyhow!("{} is not mapped to a watch directory", self.name));
         }
+
 
         while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
             match wrx.try_recv() {
@@ -85,9 +91,9 @@ impl FileStreamClient {
         Ok(())
     }
 
-    fn upload_file(&mut self, local_path:PathBuf) -> std::io::Result<()> { 
+    fn upload_file(&mut self, local_path:PathBuf) -> anyhow::Result<()> { 
         if !local_path.exists() {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "File not found"));
+            return Err(anyhow::anyhow!("File not found"));
         }
 
         let mut last_size = 0;
@@ -105,7 +111,7 @@ impl FileStreamClient {
 
         let file_name = local_path.file_name()
             .and_then(|s| s.to_str())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid file name"))?;
+            .ok_or_else(|| anyhow::anyhow!("Invalid file name"))?;
 
         let file_ext = local_path.extension()
             .and_then(|s| s.to_str())
@@ -123,7 +129,7 @@ impl FileStreamClient {
             image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
                 .expect("Failed to write JPEG image");
         } else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unsupported image format"));
+            return Err(anyhow::anyhow!("Unsupported image format"));
         }
 
         let file_header = FileHeader {
@@ -150,8 +156,7 @@ impl FileStreamClient {
         println!("Sent file: {} ({} bytes)", file_header.file_name, file_header.file_size);
 
         let response = read_response(&mut self.stream)?;
-        let response_message = String::from_utf8_lossy(&response.body);
-        self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message))).unwrap();
+        self.log_response(&response)?;
 
         // log the timestamp of the most recent backup
         let timestamp = chrono::DateTime::<chrono::Local>::from(file_datetime);
@@ -161,4 +166,13 @@ impl FileStreamClient {
 
         Ok(())
     }
+}
+
+impl Log for FileStreamClient {
+    fn log_response(&self, response:&Response) -> anyhow::Result<()> {   
+        let response_message = String::from_utf8_lossy(&response.body);
+        let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message)))?;
+        Ok(())
+    }
+
 }

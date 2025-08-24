@@ -1,13 +1,17 @@
+use std::any;
 use std::collections::HashMap;
 use std::thread::JoinHandle;
+use egui::response;
 use shared::send_request;
 use shared::RequestTypes;
+use shared::Response;
 use shared::ResponseCodes;
 use std::io;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use shared::{read_response, Request};
+use crate::app::ConnectionStatus;
 use crate::app::{Commands,Config};
 use crate::filestreamclient::FileStreamClient;
 
@@ -40,16 +44,16 @@ impl ImageClient {
             Ok(s) => {
                 self.command_stream = Some(s);
 
-                if let Some(stream) = self.command_stream.as_mut() {
-                    // Handle the connection response
-                    
-                    let connection_response = read_response(stream)?;
-                    let connection_response_message = String::from_utf8_lossy(&connection_response.body);
-                    let connection_response_code = connection_response.status_code;
+                // Handle the connection response
+                if let Some(stream) = &mut self.command_stream {
+                    let response = read_response(stream)?;
+                    self.log_response(&response)?;
 
-                    self.app_tx.send(Commands::Log(format!("{} | [ {} ]",connection_response_code,  connection_response_message))).unwrap();
-
-                    // Send storage directory path to server
+                    self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Connected))?;
+                }
+                
+                // Send storage directory path to server
+                if let Some(stream) = &mut self.command_stream {
 
                     let request = Request {
                         request_type: RequestTypes::SetStoragePath,
@@ -57,17 +61,12 @@ impl ImageClient {
                     };
 
                     send_request(request, stream)?;
-
-                    // read the storage directory response
-
                     let response = read_response(stream)?;
-                    let response_message = String::from_utf8_lossy(&response.body);
-                    let response_code = response.status_code;
-                    
-                    self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
+                    self.log_response(&response)?;
+                
                     self.get_repositories()?;
                 }
-                
+
                 // listen to the app for commands
                 while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
                     match self.rx.try_recv() {
@@ -85,19 +84,17 @@ impl ImageClient {
                                     self.repo_threads.insert(repo, (file_streaming_client_handle, stop_flag));
                                 }
                                 Commands::DisconnectStream(repo) => {
-                                    println!("disconnecting from the repo");
-
                                     match self.repo_threads.remove(&repo) {
                                         Some((handle,stop_flag)) => {
                                             stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                                            self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string())).unwrap();
+                                            self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string()))?;
 
                                             if let Err(_e) = handle.join() {
-                                                self.app_tx.send(Commands::Log(format!("{} client thread failed to join", repo).to_string())).unwrap();
+                                                self.app_tx.send(Commands::Log(format!("{} client thread failed to join", repo).to_string()))?;
                                             }
                                         },
                                         None => {
-                                            self.app_tx.send(Commands::Log(format!("Not connected to {}", repo).to_string())).unwrap();
+                                            self.app_tx.send(Commands::Log(format!("Not connected to {}", repo).to_string()))?;
                                         }
                                     }
 
@@ -110,10 +107,15 @@ impl ImageClient {
                                         send_request(request, stream)?;
 
                                         let response = read_response(stream)?;
-                                        let response_code = response.status_code;
-                                        let response_message = String::from_utf8_lossy(&response.body);
+                                        self.log_response(&response)?;
 
-                                        self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
+                                        let new_status = match response.status_code {
+                                            ResponseCodes::OK => ConnectionStatus::Disconnected,
+                                            _ => ConnectionStatus::Connected,
+                                        };
+
+                                        self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
+                                        
                                     }
                                 }
                                 _ => {},
@@ -125,21 +127,22 @@ impl ImageClient {
                 }
                 
                 if let Some(stream) = self.command_stream.as_mut() {
-                    stream.shutdown(std::net::Shutdown::Both).ok();
+                    stream.shutdown(std::net::Shutdown::Both)?;
                 }
-                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
+                self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
+                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
 
             },
             Err(e) => {
-                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string())).ok();
+                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                return Err(anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::Other, e)));
+                return Err(anyhow::anyhow!(e));
             },
         }
         Ok(())
     }
 
-    pub fn get_repositories(&mut self) -> io::Result<()> { 
+    pub fn get_repositories(&mut self) -> anyhow::Result<()> { 
         let request = Request {
             request_type: RequestTypes::GetRepos,
             body: vec![0u8,0],
@@ -148,24 +151,21 @@ impl ImageClient {
         if let Some(stream) = self.command_stream.as_mut() {
             send_request(request, stream)?;
             let response = read_response(stream)?;
-            let response_message = String::from_utf8_lossy(&response.body);
-            let response_code = response.status_code;
 
-            if response_code == ResponseCodes::OK {
+            if response.status_code == ResponseCodes::OK {
                 // send the repo list to the app
                 let available_repositories:Vec<String> = serde_json::from_slice(&response.body)?;
-                self.app_tx.send(Commands::PostRepos(available_repositories)).unwrap();
-            } else {
-                self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response_code, response_message))).unwrap();
+                self.app_tx.send(Commands::PostRepos(available_repositories))?;
+                self.log_response(&response)?;
             }
 
         } else {
-            self.app_tx.send(Commands::Log("Failed to get repositories, client not connected.".to_string())).ok();
+            self.app_tx.send(Commands::Log("Failed to get repositories, client not connected.".to_string()))?;
         }
         Ok(())
     }
 
-    pub fn initiate_file_streaming_client(&mut self, repo:String, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> io::Result<JoinHandle<()>> {
+    pub fn initiate_file_streaming_client(&mut self, repo:String, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>> {
         if let Some(stream) = self.command_stream.as_mut() {
             let request = Request {
                 request_type: RequestTypes::StartStream,
@@ -175,37 +175,40 @@ impl ImageClient {
             send_request(request, stream)?;
 
             let response = read_response(stream)?;
-            let file_stream_address = String::from_utf8_lossy(&response.body).to_string();
-            
-            self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response.status_message))).unwrap();
+            self.log_response(&response)?;
 
-            let mut file_stream = TcpStream::connect(file_stream_address.as_str())?;
+            let mut file_stream = TcpStream::connect(String::from_utf8_lossy(&response.body).to_string().as_str())?;
 
-            // handshake to confirm connection
-            
-            let file_stream_response = read_response(&mut file_stream)?;
-            let response_message = String::from_utf8_lossy(&file_stream_response.body);
+            // handshake to confirm connection .. blocking
+            let response = read_response(&mut file_stream)?;
+            self.log_response(&response)?;
 
-            self.app_tx.send(Commands::Log(format!("{} | [ {} ]", file_stream_response.status_code, response_message))).unwrap();
+            let new_status = match response.status_code {
+                ResponseCodes::OK => ConnectionStatus::Connected,
+                _ => ConnectionStatus::Disconnected,
+            };
+
+            self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
 
             // run the file streaming channel on a seperate thread
-
-            let config_clone = self.config.clone();
+            
+            let config_path = PathBuf::from("photo-client-config.json");
+            let config = Config::load_from_file(config_path.to_str().unwrap());
             let app_tx_clone = self.app_tx.clone();
             let stop_flag_clone = stop_flag.clone();
 
             return Ok(std::thread::spawn(move || {
-                let mut file_stream_client = FileStreamClient::new(file_stream, config_clone, app_tx_clone, stop_flag_clone);
+                let mut file_stream_client = FileStreamClient::new(repo,file_stream, config, app_tx_clone, stop_flag_clone);
                 if let Err(e) = file_stream_client.run() {
-                    file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e))).unwrap();
+                    let _ = file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e)));
                 }
             }));
 
         }
-        Err(std::io::Error::new(std::io::ErrorKind::NotConnected,"Main stream is not connected"))
+        Err(anyhow::anyhow!("Main stream is not connected"))
     }
 
-    pub fn create_repository(&mut self, repo_name:String) -> io::Result<()> {
+    pub fn create_repository(&mut self, repo_name:String) -> anyhow::Result<()> {
         
         if let Some(stream) = self.command_stream.as_mut() {
             let request = Request {
@@ -216,14 +219,25 @@ impl ImageClient {
             send_request(request, stream)?;
 
             let response = read_response(stream)?;
-            let response_message = String::from_utf8_lossy(&response.body);
-            let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message))).unwrap();
+            self.log_response(&response)?;
 
             if response.status_code == ResponseCodes::OK {
                 self.get_repositories()?;
             }
         }
         Ok(())
+        
     }
+}
 
+pub trait Log {
+    fn log_response(&self, response:&Response)  -> anyhow::Result<()>;
+}
+
+impl Log for ImageClient {
+    fn log_response(&self, response:&Response) -> anyhow::Result<()> {   
+        let response_message = String::from_utf8_lossy(&response.body);
+        let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message)))?;
+        Ok(())
+    }
 }
