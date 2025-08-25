@@ -139,6 +139,9 @@ impl eframe::App for ConfigApp {
                     ui.vertical(|ui| {
                         if self.ui.connection_status == ConnectionStatus::Connected {
                             if ui.button("Disconnect").clicked() {
+                                self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
+                                self.config.save_to_file(self.config_path.to_str().unwrap());
+                                
                                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
                                     self.app_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
                                     return;
@@ -157,40 +160,73 @@ impl eframe::App for ConfigApp {
 
                         if self.ui.connection_status == ConnectionStatus::Disconnected {
                             if ui.button("Connect to server").clicked() {
-                                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                    self.ui.connection_status = ConnectionStatus::Connecting;
-                                    self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
-                                    self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-                                
-                                    let log_tx_clone = self.app_tx.clone();
-                                    let stop_flag_clone = self.stop_flag.clone();
-
-                                    let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
-                                    self.cli_tx = Some(cmd_tx.clone());
-
-                                    self.client_handle = Some(std::thread::spawn(move || {
-                                        let mut client = ImageClient::new(log_tx_clone, cmd_rx, stop_flag_clone);
-                                        if let Err(e) = client.connect() {
-                                        client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
-                                        }
-                                    }));
+                                if self.config.server_address.is_empty() | self.config.server_storage_directory.is_empty() {
+                                    self.app_tx.send(Commands::Log("server address or storage directory not set".to_string())).unwrap();
                                 } else {
-                                    self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
-                                }  
-                            }
-                        }
+                                    self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
+                                    self.config.save_to_file(self.config_path.to_str().unwrap());
 
-                        if ui.button("Save Configuration").clicked() {
-                            self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                            self.config.save_to_file(self.config_path.to_str().unwrap());
+                                    if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                        self.ui.connection_status = ConnectionStatus::Connecting;
+                                        self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
+                                        self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    
+                                        let log_tx_clone = self.app_tx.clone();
+                                        let stop_flag_clone = self.stop_flag.clone();
+
+                                        let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
+                                        self.cli_tx = Some(cmd_tx.clone());
+
+                                        self.client_handle = Some(std::thread::spawn(move || {
+                                            let mut client = ImageClient::new(log_tx_clone, cmd_rx, stop_flag_clone);
+                                            if let Err(e) = client.connect() {
+                                            client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
+                                            }
+                                        }));
+                                    } else {
+                                        self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
+                                    }    
+                                }
+                            }
                         }
                     });
                 });
-            });            
+            });       
+
             ui.label("Server Address:");
             ui.text_edit_singleline(&mut self.config.server_address);
             ui.label("Global storage path on Server:");
             ui.text_edit_singleline(&mut self.config.server_storage_directory);
+
+            if self.ui.connection_status == ConnectionStatus::Connected {
+                if self.config.repo_config.is_empty() {
+                    if ui.button("New Repository").clicked() {
+                        self.ui.show_create_ui = !self.ui.show_create_ui;
+                        if !self.ui.show_create_ui {
+                            self.ui.new_repo_name.clear();
+                        }
+                    }
+                    if self.ui.show_create_ui {
+                        ui.horizontal(|ui| {
+                            ui.text_edit_singleline(&mut self.ui.new_repo_name);
+
+                            if ui.button("Create").clicked() {
+
+                                if let Some(cli_tx) = &self.cli_tx {
+                                    self.app_tx.send(Commands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
+                                    cli_tx.send(Commands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
+                                    
+                                } else {
+                                    self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
+                                }
+                                
+                                self.ui.new_repo_name.clear();
+                                self.ui.show_create_ui = false;
+                            }
+                        });
+                    }
+                }
+            }
 
             if self.ui.show_repos {
                 ui.separator();
@@ -276,11 +312,12 @@ impl eframe::App for ConfigApp {
                             
                             if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Disconnected) {
                                 if ui.button("Connect").clicked() {
+                                    self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
+                                    self.config.save_to_file(self.config_path.to_str().unwrap());
+
                                     self.ui.repo_status.insert(repo_name.to_string(), ConnectionStatus::Connecting);
                                     if let Some(cli_tx) = &self.cli_tx {
                                         cli_tx.send(Commands::StartStream(repo_name.to_string())).unwrap();
-                                    } else {
-                                        self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
                                     }
                                 }
                             }

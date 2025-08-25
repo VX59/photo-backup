@@ -2,8 +2,7 @@
 **/photo-server/target/**
 /target/**
 **/shared/**
-**/photo-server/storage-server/**
-**photo-client/storage-client/**
+**/photo-server/storage/**
 /photo-client/last_backup.txt
 /photo-client/photo-client-config.json
 /photo-server/photo-server-config.json

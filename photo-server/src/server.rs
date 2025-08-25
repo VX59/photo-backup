@@ -18,7 +18,6 @@ pub struct PhotoServer {
     pub name: String,
     pub address: String,
     pub storage_directory: String,
-    pub config: Config,
 }
 
 impl Config {
@@ -54,12 +53,11 @@ impl Config {
 }
 
 impl PhotoServer {
-    pub fn new(name: String, address: String, storage_directory: String, config:Config) -> Self {
+    pub fn new(name: String, address: String, storage_directory: String) -> Self {
         PhotoServer {
             name,
             address,
             storage_directory,
-            config,
         }
     }
 
@@ -113,11 +111,10 @@ impl PhotoServer {
             self.storage_directory = storage_directory_request_message.to_string();
             
             let storage_directory_clone = self.storage_directory.clone();
-            let mut config_clone = self.config.clone();
             
             // spawn a request handler in a seperate thread so we can accept another connection
             let _ = std::thread::spawn(move || {
-                if let Err(e) = request_handler(storage_directory_clone, stream, &mut config_clone) {
+                if let Err(e) = request_handler(storage_directory_clone, stream) {
                     println!("{}", e);
                 }
             });
@@ -128,9 +125,9 @@ impl PhotoServer {
 
 }
 
-fn request_handler(storage_directory: String, mut stream:TcpStream, config: &mut Config) -> std::io::Result<()>{
+fn request_handler(storage_directory: String, mut stream:TcpStream) -> std::io::Result<()>{
     println!("Launching a request handler");
-
+    let mut config = Config::load_from_file("./photo-server-config.json");
     let mut repo_threads: HashMap<String, (std::thread::JoinHandle<()>, std::sync::Arc<std::sync::atomic::AtomicBool>)> = HashMap::new();
     loop {
         let request = read_request(&mut stream)?;

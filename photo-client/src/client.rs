@@ -49,7 +49,7 @@ impl ImageClient {
                 if let Some(stream) = &mut self.command_stream {
                     let response = read_response(stream)?;
                     self.log_response(&response)?;
-
+                    
                     self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Connected))?;
                 }
                 
@@ -66,17 +66,6 @@ impl ImageClient {
                     self.log_response(&response)?;
                 
                     self.get_repositories()?;
-                }
-
-                for (repo_name, config) in self.config.repo_config.clone() {
-                    if config.auto_connect {
-                        
-                        // request a file streaming channel - the server will open another port
-                        let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let file_streaming_client_handle = self.initiate_file_streaming_client(repo_name.to_string(), stop_flag.clone())?;
-
-                        self.repo_threads.insert(repo_name, (file_streaming_client_handle, stop_flag));
-                    }
                 }
 
                 // listen to the app for commands
@@ -148,6 +137,7 @@ impl ImageClient {
             Err(e) => {
                 self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
                 return Err(anyhow::anyhow!(e));
             },
         }
@@ -163,12 +153,23 @@ impl ImageClient {
         if let Some(stream) = self.command_stream.as_mut() {
             send_request(request, stream)?;
             let response = read_response(stream)?;
+            self.log_response(&response)?;
 
             if response.status_code == ResponseCodes::OK {
                 // send the repo list to the app
                 let available_repositories:Vec<String> = serde_json::from_slice(&response.body)?;
                 self.app_tx.send(Commands::PostRepos(available_repositories))?;
-                self.log_response(&response)?;
+
+                for (repo_name, config) in self.config.repo_config.clone() {
+                    if config.auto_connect {
+                        
+                        // request a file streaming channel - the server will open another port
+                        let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let file_streaming_client_handle = self.initiate_file_streaming_client(repo_name.to_string(), stop_flag.clone())?;
+
+                        self.repo_threads.insert(repo_name, (file_streaming_client_handle, stop_flag));
+                    }
+                }
             }
 
         } else {
