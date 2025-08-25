@@ -22,3 +22,11 @@ fix the repository selection so that you cant lauch multiple client side streami
 8/21/25
 Broke up the server and client streaming logic so that the streaming services exist in their own seperate data structures to improve code modularity
 implemented proper response send/read formatting for the file streaming server and file streaming client
+
+8/24/25
+ui workflow is fixed and displays connections statuses for the main command channel and file streaming channels.
+auto-connect is now an implemented features
+each repository has its own config with seperate watch directories and options configurable
+
+next we need to start adding info available about a connected repository, 
+such as maybe the size of the folder or the number of files stored in the folder, its also necessary to display a tree of subdirs within the repository

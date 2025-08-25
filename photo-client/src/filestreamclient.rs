@@ -46,7 +46,8 @@ impl FileStreamClient {
             }
         };
 
-        if let Some(path) = self.config.watch_directory.get(&self.name) {
+        if let Some(reop_config) = self.config.repo_config.get(&self.name) {
+            let path = &reop_config.watch_directory;
             if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::Recursive) {
                 return Err(anyhow::anyhow!("Failed to watch directory: {} {}",path, e));
             }
