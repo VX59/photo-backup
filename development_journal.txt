@@ -30,3 +30,5 @@ each repository has its own config with seperate watch directories and options c
 
 next we need to start adding info available about a connected repository, 
 such as maybe the size of the folder or the number of files stored in the folder, its also necessary to display a tree of subdirs within the repository
+also need to make sure users cant create a new repository with a blank name
+add remove repository features also

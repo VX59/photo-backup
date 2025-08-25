@@ -359,7 +359,6 @@ impl eframe::App for ConfigApp {
                 Commands::PostRepos(repos) => {
                     self.ui.show_repos = true;
                     
-                    self.ui.repo_status.clear();
                     for repo in repos {
                         self.ui.repo_status.insert(repo, ConnectionStatus::Disconnected);
                     }

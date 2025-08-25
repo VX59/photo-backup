@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use shared::{read_response, Request};
 use crate::app::ConnectionStatus;
+use crate::app::RepoConfig;
 use crate::app::{Commands,Config};
 use crate::filestreamclient::FileStreamClient;
 
@@ -236,6 +237,16 @@ impl ImageClient {
                 self.get_repositories()?;
             }
         }
+
+        let repo_config = RepoConfig {
+            recursive_backup: false,
+            auto_connect: false,
+            watch_directory: "".to_string(),
+        };
+
+        self.config.repo_config.insert(repo_name, repo_config);
+        self.config.save_to_file("photo-client-config.json");
+
         Ok(())
         
     }
