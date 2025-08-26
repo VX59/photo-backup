@@ -27,8 +27,12 @@ implemented proper response send/read formatting for the file streaming server a
 ui workflow is fixed and displays connections statuses for the main command channel and file streaming channels.
 auto-connect is now an implemented features
 each repository has its own config with seperate watch directories and options configurable
+no longer need to manually save the config
+fixed initiallization workflow bugs
 
 next we need to start adding info available about a connected repository, 
 such as maybe the size of the folder or the number of files stored in the folder, its also necessary to display a tree of subdirs within the repository
 also need to make sure users cant create a new repository with a blank name
 add remove repository features also
+when a tcp stream cuts we need to update the connection statuses
+when a file is uploaded we need to create the relative path on the repo even if its nested in n folders
