@@ -85,39 +85,7 @@ impl ImageClient {
                                     self.repo_threads.insert(repo, (file_streaming_client_handle, stop_flag));
                                 }
                                 Commands::DisconnectStream(repo) => {
-                                    match self.repo_threads.remove(&repo) {
-                                        Some((handle,stop_flag)) => {
-                                            stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                                            self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string()))?;
-
-                                            if let Err(_e) = handle.join() {
-                                                self.app_tx.send(Commands::Log(format!("{} client thread failed to join", repo).to_string()))?;
-                                            }
-                                        },
-                                        None => {
-                                            self.app_tx.send(Commands::Log(format!("Not connected to {}", repo).to_string()))?;
-                                        }
-                                    }
-
-                                    if let Some(stream) = self.command_stream.as_mut() {
-                                        let request = Request {
-                                            request_type:RequestTypes::DisconnectStream,
-                                            body: repo.as_bytes().to_vec(),
-                                        };
-
-                                        send_request(request, stream)?;
-
-                                        let response = read_response(stream)?;
-                                        self.log_response(&response)?;
-
-                                        let new_status = match response.status_code {
-                                            ResponseCodes::OK => ConnectionStatus::Disconnected,
-                                            _ => ConnectionStatus::Connected,
-                                        };
-
-                                        self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
-                                        
-                                    }
+                                    self.disconnect_repository(&repo)?;                               
                                 }
                                 _ => {},
                             }
@@ -126,7 +94,12 @@ impl ImageClient {
                         Err(e) => return Err(anyhow::Error::new(e)),
                     }
                 }
-                
+                // kill all repo connections
+                let repo_list = self.repo_threads.keys().cloned().collect::<Vec<_>>();
+                for repo in repo_list {
+                    self.disconnect_repository(&repo)?;
+                }
+
                 if let Some(stream) = self.command_stream.as_mut() {
                     stream.shutdown(std::net::Shutdown::Both)?;
                 }
@@ -140,6 +113,43 @@ impl ImageClient {
                 self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
                 return Err(anyhow::anyhow!(e));
             },
+        }
+        Ok(())
+    }
+    pub fn disconnect_repository(&mut self, repo:&String) -> anyhow::Result<()>{
+        match self.repo_threads.remove(repo) {
+            Some((handle,stop_flag)) => {
+                stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string()))?;
+
+                if let Err(_e) = handle.join() {
+                    self.app_tx.send(Commands::Log(format!("{} client thread failed to join", repo).to_string()))?;
+                    return Err(anyhow::anyhow!(format!("{} client thread failed to join", repo)));
+                }
+            },
+            None => {
+                self.app_tx.send(Commands::Log(format!("Not connected to {}", repo).to_string()))?;
+            }
+        }
+
+        if let Some(stream) = self.command_stream.as_mut() {
+            let request = Request {
+                request_type:RequestTypes::DisconnectStream,
+                body: repo.as_bytes().to_vec(),
+            };
+
+            send_request(request, stream)?;
+
+            let response = read_response(stream)?;
+            self.log_response(&response)?;
+
+            let new_status = match response.status_code {
+                ResponseCodes::OK => ConnectionStatus::Disconnected,
+                _ => ConnectionStatus::Connected,
+            };
+
+            self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
+            
         }
         Ok(())
     }
@@ -161,7 +171,7 @@ impl ImageClient {
                 self.app_tx.send(Commands::PostRepos(available_repositories))?;
 
                 for (repo_name, config) in self.config.repo_config.clone() {
-                    if config.auto_connect {
+                    if config.auto_connect & self.config.repo_config.contains_key(&repo_name){
                         
                         // request a file streaming channel - the server will open another port
                         let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

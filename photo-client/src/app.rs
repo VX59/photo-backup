@@ -50,7 +50,6 @@ impl std::fmt::Display for ConnectionStatus {
 
 pub struct UiState {
     pub show_create_ui: bool,
-    pub show_repos: bool,
     pub new_repo_name: String,
     pub selected_repo: Option<usize>,
     pub connection_status: ConnectionStatus,
@@ -62,7 +61,6 @@ impl Default for UiState {
         Self {
             connection_status: ConnectionStatus::Disconnected,
             show_create_ui: false,
-            show_repos: false,
             new_repo_name: String::new(),
             selected_repo: None,
             repo_status: std::collections::HashMap::new(),
@@ -146,7 +144,6 @@ impl eframe::App for ConfigApp {
                                     self.app_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
                                     return;
                                 }
-                                self.ui.show_repos = false;
                                 self.ui.connection_status = ConnectionStatus::Disconnecting;
                                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -199,36 +196,6 @@ impl eframe::App for ConfigApp {
             ui.text_edit_singleline(&mut self.config.server_storage_directory);
 
             if self.ui.connection_status == ConnectionStatus::Connected {
-                if self.config.repo_config.is_empty() {
-                    if ui.button("New Repository").clicked() {
-                        self.ui.show_create_ui = !self.ui.show_create_ui;
-                        if !self.ui.show_create_ui {
-                            self.ui.new_repo_name.clear();
-                        }
-                    }
-                    if self.ui.show_create_ui {
-                        ui.horizontal(|ui| {
-                            ui.text_edit_singleline(&mut self.ui.new_repo_name);
-
-                            if ui.button("Create").clicked() {
-
-                                if let Some(cli_tx) = &self.cli_tx {
-                                    self.app_tx.send(Commands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
-                                    cli_tx.send(Commands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
-                                    
-                                } else {
-                                    self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
-                                }
-                                
-                                self.ui.new_repo_name.clear();
-                                self.ui.show_create_ui = false;
-                            }
-                        });
-                    }
-                }
-            }
-
-            if self.ui.show_repos {
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
@@ -393,9 +360,9 @@ impl eframe::App for ConfigApp {
                 Commands::Log(msg) => {
                     writeln!(self.log_file, "{}", msg).ok();
                 }
-                Commands::PostRepos(repos) => {
-                    self.ui.show_repos = true;
-                    
+                Commands::PostRepos(repos) => {       
+                    self.ui.selected_repo = None;
+                    self.ui.repo_status.clear();             
                     for repo in repos {
                         self.ui.repo_status.insert(repo, ConnectionStatus::Disconnected);
                     }
