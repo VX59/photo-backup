@@ -1,12 +1,9 @@
-use std::any;
 use std::collections::HashMap;
 use std::thread::JoinHandle;
-use egui::response;
 use shared::send_request;
 use shared::RequestTypes;
 use shared::Response;
 use shared::ResponseCodes;
-use std::io;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -69,53 +66,59 @@ impl ImageClient {
                 }
 
                 // listen to the app for commands
-                while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                    match self.rx.try_recv() {
-                        Ok(new_command) => {
-                            match new_command {
-                                Commands::CreateRepo(msg) => {
-                                    self.create_repository(msg.to_string())?;
-                                }
-                                Commands::StartStream(repo) => {
+                self.app_request_handler()?;
 
-                                    // request a file streaming channel - the server will open another port
-                                    let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                                    let file_streaming_client_handle = self.initiate_file_streaming_client(repo.to_string(), stop_flag.clone())?;
-
-                                    self.repo_threads.insert(repo, (file_streaming_client_handle, stop_flag));
-                                }
-                                Commands::DisconnectStream(repo) => {
-                                    self.disconnect_repository(&repo)?;                               
-                                }
-                                _ => {},
-                            }
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => { /* just continue */ },
-                        Err(e) => return Err(anyhow::Error::new(e)),
-                    }
-                }
                 // kill all repo connections
                 let repo_list = self.repo_threads.keys().cloned().collect::<Vec<_>>();
                 for repo in repo_list {
                     self.disconnect_repository(&repo)?;
                 }
 
+                // kill the client
                 if let Some(stream) = self.command_stream.as_mut() {
                     stream.shutdown(std::net::Shutdown::Both)?;
                 }
                 self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
                 self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
-
             },
             Err(e) => {
-                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
+                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
                 return Err(anyhow::anyhow!(e));
             },
         }
         Ok(())
     }
+    fn app_request_handler(&mut self) -> anyhow::Result<()> {
+        while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            match self.rx.try_recv() {
+                Ok(new_command) => {
+                    match new_command {
+                        Commands::CreateRepo(msg) => {
+                            self.create_repository(msg.to_string())?;
+                        }
+                        Commands::StartStream(repo) => {
+
+                            // request a file streaming channel - the server will open another port
+                            let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                            let file_streaming_client_handle = self.initiate_file_streaming_client(repo.to_string(), stop_flag.clone())?;
+
+                            self.repo_threads.insert(repo, (file_streaming_client_handle, stop_flag));
+                        }
+                        Commands::DisconnectStream(repo) => {
+                            self.disconnect_repository(&repo)?;                               
+                        }
+                        _ => {},
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => { /* just continue */ },
+                Err(e) => return Err(anyhow::Error::new(e)),
+            }
+        }
+        Ok(())
+    }
+
     pub fn disconnect_repository(&mut self, repo:&String) -> anyhow::Result<()>{
         match self.repo_threads.remove(repo) {
             Some((handle,stop_flag)) => {
@@ -215,8 +218,7 @@ impl ImageClient {
 
             // run the file streaming channel on a seperate thread
             
-            let config_path = PathBuf::from("photo-client-config.json");
-            let config = Config::load_from_file(config_path.to_str().unwrap());
+            let config = Config::load_from_file("photo-client-config.json");
             let app_tx_clone = self.app_tx.clone();
             let stop_flag_clone = stop_flag.clone();
 

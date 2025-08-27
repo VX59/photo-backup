@@ -13,8 +13,8 @@ use app::UiState;
 use crate::app::Commands;
 
 fn main() -> std::io::Result<()> {
-    let config_path = PathBuf::from("photo-client-config.json");
 
+    let config_path = PathBuf::from("photo-client-config.json");
     let (tx, rx) = mpsc::channel::<Commands>();
 
     if std::path::Path::new("output.log").exists() {
