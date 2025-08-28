@@ -36,7 +36,15 @@ impl Config {
             }
         }   
     }
-
+    pub fn remove_repo(&mut self, repo:String) {
+        if self.repo_list.contains(&repo) {
+            self.repo_list.retain(|r| r != &repo);
+            self.save_to_file(&self.path);
+        } else {
+            eprintln!("Repo does not exist in config.");
+        }
+    }
+    
     pub fn add_repo(&mut self, repo:String) {
         if !self.repo_list.contains(&repo) {
             self.repo_list.push(repo);
@@ -73,9 +81,29 @@ impl PhotoServerRequestHandler {
                 RequestTypes::CreateRepo => self.CreateRepo(request)?,
                 RequestTypes::StartStream => self.StartStream(request)?,
                 RequestTypes::DisconnectStream => self.DisconnectStream(request)?,
+                RequestTypes::RemoveRepository => self.RemoveRepository(request)?,
                 _ => {},
             }
         }
+    }
+
+    fn RemoveRepository(&mut self, request:Request) -> anyhow::Result<()> {
+        let repo_name = String::from_utf8_lossy(&request.body)
+            .trim() 
+            .replace(|c: char| c.is_control(), "_")
+            .to_string();
+
+        self.config.remove_repo(repo_name.clone());
+        let repo_path = std::path::Path::new(&self.storage_directory).join(repo_name.clone());
+        std::fs::remove_dir_all(repo_path)?;
+
+        let response = Response {
+            status_code: ResponseCodes::OK,
+            status_message: "OK".to_string(),
+            body: format!("{} repo successfully deleted",repo_name).as_bytes().to_vec(),
+        };
+        send_response(response, &mut self.stream)?;
+        Ok(())
     }
 
     fn GetRepos(&mut self) -> anyhow::Result<()> {

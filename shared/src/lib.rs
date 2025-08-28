@@ -51,6 +51,7 @@ pub enum RequestTypes {
     SetStoragePath,
     StartStream,
     DisconnectStream,
+    RemoveRepository,
 }
 
 #[derive(Serialize, Deserialize)]

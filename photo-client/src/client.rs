@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::thread::JoinHandle;
+use egui::response;
 use shared::send_request;
 use shared::RequestTypes;
 use shared::Response;
@@ -25,13 +26,12 @@ pub struct ImageClient {
 impl ImageClient {
     pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         let config_path = PathBuf::from("photo-client-config.json");
-        let config: Config = Config::load_from_file(config_path.to_str().unwrap());
 
         ImageClient {
             app_tx,
             rx, 
             stop_flag,
-            config,
+            config: Config::load_from_file(config_path.to_str().unwrap()),
             command_stream: None,
             repo_threads: HashMap::new(),
         }
@@ -109,12 +109,39 @@ impl ImageClient {
                         Commands::DisconnectStream(repo) => {
                             self.disconnect_repository(&repo)?;                               
                         }
+
+                        Commands::RemoveRepository(repo) => {
+                            self.disconnect_repository(&repo)?;
+                            self.remove_repository(&repo)?;
+                            self.get_repositories()?;
+                        }
+
                         _ => {},
                     }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => { /* just continue */ },
                 Err(e) => return Err(anyhow::Error::new(e)),
             }
+        }
+        Ok(())
+    }
+
+    pub fn remove_repository(&mut self, repo:&String) -> anyhow::Result<()> {
+        if let Some(stream) = self.command_stream.as_mut() {
+            let request = Request {
+                request_type: RequestTypes::RemoveRepository,
+                body: repo.clone().as_bytes().to_vec(),
+            };
+
+            send_request(request, stream)?;
+            let response = read_response(stream)?;
+            self.log_response(&response)?;
+        
+            if response.status_code == ResponseCodes::OK {
+                self.config.repo_config.remove(repo);
+                self.config.save_to_file("./photo-client-config.json");
+                self.app_tx.send(Commands::RemoveRepository(repo.to_string()))?;
+            }            
         }
         Ok(())
     }
@@ -183,6 +210,9 @@ impl ImageClient {
                         self.repo_threads.insert(repo_name, (file_streaming_client_handle, stop_flag));
                     }
                 }
+            } else {
+                // the repo list is probably empty
+                self.app_tx.send(Commands::PostRepos(Vec::new()))?;
             }
 
         } else {

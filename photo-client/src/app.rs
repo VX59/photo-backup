@@ -5,7 +5,7 @@ use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::io::{Read,Write};
-use egui::{Color32, Stroke, RichText, Frame, Checkbox};
+use egui::{Color32, RichText, Frame, Checkbox};
 pub struct ConfigApp {
     pub config: Config,
     pub config_path: PathBuf,
@@ -26,6 +26,7 @@ pub enum Commands {
     StartStream(String),
     DisconnectStream(String),
     UpdateConnectionStatus(ConnectionStatus),
+    RemoveRepository(String),
 }
 
 #[derive(PartialEq)]
@@ -145,9 +146,6 @@ impl ConfigApp {
     fn disconnect_from_server(&mut self, ui:&mut egui::Ui) {
         if self.ui.connection_status == ConnectionStatus::Connected {
             if ui.button("Disconnect").clicked() {
-                self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                self.config.save_to_file(self.config_path.to_str().unwrap());
-                
                 if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
                     self.app_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
                     return;
@@ -229,6 +227,8 @@ impl ConfigApp {
 
                         if let Some(cli_tx) = &self.cli_tx {
                             self.app_tx.send(Commands::Log(format!("Creating repository {}", self.ui.new_repo_name).to_string())).unwrap();
+                            self.config.repo_config.entry(self.ui.new_repo_name.clone()).or_default();
+
                             cli_tx.send(Commands::CreateRepo(self.ui.new_repo_name.to_string())).unwrap();
                             
                         } else {
@@ -342,13 +342,14 @@ impl ConfigApp {
                         self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
                         if let Some(cli_tx) = &self.cli_tx {
                             cli_tx.send(Commands::DisconnectStream(repo_name.to_string())).unwrap();
-                        } else {
-                            self.app_tx.send(Commands::Log("The client isn't running".to_string())).unwrap();
                         }
                     }
                     
                     if ui.button("Remove Repository").clicked() {
-                        
+                        self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
+                        if let Some(cli_tx) = &self.cli_tx {
+                            cli_tx.send(Commands::RemoveRepository(repo_name.to_string())).unwrap();
+                        }
                     }
                 }                            
             } else {
@@ -388,6 +389,12 @@ impl ConfigApp {
 
                 Commands::UpdateConnectionStatus(status) => self.ui.connection_status = status,
 
+                Commands::RemoveRepository(repo) => {
+                    self.config.repo_config.remove(&repo);
+                    self.ui.repo_status.remove(&repo);
+                    self.ui.selected_repo = None;
+                    self.config.save_to_file(self.config_path.to_str().unwrap());
+                }
                 _ => {},
             }
         }
