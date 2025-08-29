@@ -36,3 +36,7 @@ also need to make sure users cant create a new repository with a blank name
 add remove repository features also
 when a tcp stream cuts we need to update the connection statuses
 when a file is uploaded we need to create the relative path on the repo even if its nested in n folders
+
+8/28/25
+restructured the code for the desktop app and client request handler from the app.
+implemented feature to delete repositories from the system

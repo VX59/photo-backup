@@ -248,16 +248,22 @@ impl ImageClient {
 
             // run the file streaming channel on a seperate thread
             
-            let config = Config::load_from_file("photo-client-config.json");
-            let app_tx_clone = self.app_tx.clone();
-            let stop_flag_clone = stop_flag.clone();
+            if let Some(rc) = self.config.repo_config.get(&repo) {
+                let app_tx_clone = self.app_tx.clone();
+                let stop_flag_clone = stop_flag.clone();
+                let repo_config = rc.clone();
 
-            return Ok(std::thread::spawn(move || {
-                let mut file_stream_client = FileStreamClient::new(repo,file_stream, config, app_tx_clone, stop_flag_clone);
-                if let Err(e) = file_stream_client.run() {
-                    let _ = file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e)));
-                }
-            }));
+                return Ok(std::thread::spawn(move || {
+                    let mut file_stream_client = FileStreamClient::new(repo,file_stream, repo_config, app_tx_clone, stop_flag_clone);
+                    if let Err(e) = file_stream_client.run() {
+                        let _ = file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e)));
+                    }
+                }));
+            } else {
+                self.app_tx.send(Commands::Log("Unable to fetch repo config".to_string()))?;
+            }
+
+
 
         }
         Err(anyhow::anyhow!("Main stream is not connected"))

@@ -11,6 +11,7 @@ use chrono;
 use bincode::encode_into_slice;
 use std::net::TcpStream;
 use std::path::PathBuf;
+use crate::app::RepoConfig;
 use crate::app::{Commands, Config};
 use shared::{read_response, Response};
 use std::sync::mpsc;
@@ -19,17 +20,17 @@ use crate::client::{ Log};
 pub struct FileStreamClient {
     name:String,
     stream:TcpStream,
-    config:Config,
+    repo_config:RepoConfig,
     pub app_tx:mpsc::Sender<Commands>,
     stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>
 }
 
 impl FileStreamClient {
-    pub fn new(name:String, stream:TcpStream, config:Config, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(name:String, stream:TcpStream, repo_config:RepoConfig, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         FileStreamClient { 
             name,
             stream,
-            config,
+            repo_config,
             app_tx,
             stop_flag
         }
@@ -46,13 +47,9 @@ impl FileStreamClient {
             }
         };
 
-        if let Some(reop_config) = self.config.repo_config.get(&self.name) {
-            let path = &reop_config.watch_directory;
-            if let Err(e) = watcher.watch(Path::new(path), RecursiveMode::Recursive) {
-                return Err(anyhow::anyhow!("Failed to watch directory: {} {}",path, e));
-            }
-        } else {
-            return Err(anyhow::anyhow!("{} is not mapped to a watch directory", self.name));
+        let path = self.repo_config.watch_directory.clone();
+        if let Err(e) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
+            return Err(anyhow::anyhow!("Failed to watch directory: {} {}",path, e));
         }
 
 
@@ -123,18 +120,29 @@ impl FileStreamClient {
         let image = ImageReader::open(local_path.clone())?.decode().expect("unable to decode image");
         let mut image_bytes: Vec<u8> = Vec::new();
 
-        if file_ext == "png" {
+        match file_ext {
+            "png" => {
             image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Png)
                 .expect("Failed to write PNG image");
-        } else if file_ext == "jpg" || file_ext == "jpeg" {
-            image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
+            },
+            "jpg" | "jpeg" => {
+                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
                 .expect("Failed to write JPEG image");
-        } else {
-            return Err(anyhow::anyhow!("Unsupported image format"));
+            },
+
+            "gif" => {
+                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Gif)
+                .expect("Failed to write GIF image");
+            }
+            _ => return Err(anyhow::anyhow!("Unsupported image format")),
+
         }
 
+        let repo_root = Path::new(&self.repo_config.watch_directory);
+        let relative_path = local_path.strip_prefix(repo_root).unwrap().parent().unwrap_or_else(|| Path::new("")).to_str().unwrap().to_string();
         let file_header = FileHeader {
             file_name: file_name.to_string(), 
+            relative_path: relative_path,
             file_size: image_bytes.len() as u64,
             file_ext: file_ext.to_string(),
             file_datetime: file_datetime,

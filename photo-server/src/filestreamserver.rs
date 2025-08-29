@@ -88,17 +88,19 @@ impl FileStreamServer {
         let (file_header, _): (FileHeader, _) = bincode::decode_from_slice(&header_bytes, config::standard())?;
 
         let mut image_bytes = vec![0u8; file_header.file_size as usize];
-        println!("Receiving file: {} ({} bytes)", file_header.file_name, file_header.file_size);
 
         self.stream.read_exact(&mut image_bytes)?;
 
         let image = image::load_from_memory(&image_bytes)?;
 
-        let image_path = file_dest.join(file_header.file_name);
-        if image_path.exists() {
-            if std::path::Path::new(&image_path).exists() == false {
-                std::fs::create_dir_all(&image_path)?;
-            }
+        println!("{} is the file dest", file_dest.to_str().unwrap().to_string());
+        let image_loc = file_dest.join(file_header.relative_path);
+        let image_path = image_loc.join(file_header.file_name);
+
+        println!("Receiving file: {} ({} bytes)", image_path.to_str().unwrap().to_string(), file_header.file_size);
+
+        if std::path::Path::new(&image_loc).exists() == false {
+        std::fs::create_dir_all(&image_loc)?;
         }
 
         image.save(std::path::Path::new(&image_path))?;
