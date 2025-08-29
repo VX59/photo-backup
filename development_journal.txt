@@ -40,3 +40,10 @@ when a file is uploaded we need to create the relative path on the repo even if 
 8/28/25
 restructured the code for the desktop app and client request handler from the app.
 implemented feature to delete repositories from the system
+implemented repo subdirectory tracking.
+removed "enable recursive backup" feature, why the fuck would you not enable it
+
+add feature to upload gifs
+add feature to upload generic files
+add features to track file modifications when they get saved
+add connection auth - both client and server exchange challenges. the server proves it has the right key, the client proves it has its own private key.

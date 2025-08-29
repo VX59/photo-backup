@@ -287,11 +287,7 @@ impl ImageClient {
             }
         }
 
-        let repo_config = RepoConfig {
-            recursive_backup: false,
-            auto_connect: false,
-            watch_directory: "".to_string(),
-        };
+        let repo_config = RepoConfig::default();
 
         self.config.repo_config.insert(repo_name, repo_config);
         self.config.save_to_file("photo-client-config.json");

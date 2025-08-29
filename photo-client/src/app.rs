@@ -96,7 +96,6 @@ impl Config {
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct RepoConfig {
-    pub recursive_backup: bool,
     pub auto_connect: bool,
     pub watch_directory: String,
 }
@@ -296,7 +295,6 @@ impl ConfigApp {
                 }
 
                 ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().auto_connect, RichText::new("Enable auto-connect").italics()));
-                ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().recursive_backup, RichText::new("Enable Recursive Backup").italics()));
 
                 if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Connected) {
                     if ui.button("Backup Now").clicked() {
