@@ -282,18 +282,20 @@ impl ConfigApp {
 
                 ui.text_edit_singleline(&mut repo_config.watch_directory);
                 
-                if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Disconnected) {
-                    if ui.button("Connect").clicked() {
-                        self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                        self.config.save_to_file(self.config_path.to_str().unwrap());
+                if !repo_config.watch_directory.is_empty() && std::path::Path::new(&repo_config.watch_directory).exists() == true {
+                    if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Disconnected) {
+                        if ui.button("Connect").clicked() {
+                            self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
+                            self.config.save_to_file(self.config_path.to_str().unwrap());
 
-                        self.ui.repo_status.insert(repo_name.to_string(), ConnectionStatus::Connecting);
-                        if let Some(cli_tx) = &self.cli_tx {
-                            cli_tx.send(Commands::StartStream(repo_name.to_string())).unwrap();
+                            self.ui.repo_status.insert(repo_name.to_string(), ConnectionStatus::Connecting);
+                            if let Some(cli_tx) = &self.cli_tx {
+                                cli_tx.send(Commands::StartStream(repo_name.to_string())).unwrap();
+                            }
                         }
                     }
                 }
-
+                
                 ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().auto_connect, RichText::new("Enable auto-connect").italics()));
 
                 if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Connected) {
@@ -365,6 +367,15 @@ impl ConfigApp {
                 self.repository_controls(ui);
             });
         }
+    }
+
+    fn file_explorer(&mut self, ui: &mut egui::Ui, path:&mut String) {
+      if self.ui.connection_status == ConnectionStatus::Connected {
+          ui.vertical(|ui| {
+            ui.label("File Explorer");
+
+          });
+      }  
     }
 
     fn client_command_receiver(&mut self) {

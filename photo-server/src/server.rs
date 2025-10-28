@@ -25,7 +25,10 @@ impl PhotoServer {
 
         let listener = TcpListener::bind("0.0.0.0:8080")?;
         println!("Photo server listening on {}", self.address);
-        
+        if std::path::Path::new("photo-server/trees").exists() == false {
+            std::fs::create_dir_all("trees")?;
+        }
+
         for stream in listener.incoming() {
             let mut stream = match stream {
                 Ok(s) => s,

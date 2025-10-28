@@ -157,7 +157,9 @@ impl PhotoServerRequestHandler {
             }
 
             // save it to the config
-            self.config.add_repo(repo_name);
+            self.config.add_repo(repo_name.clone());
+            // create the tree
+            std::fs::File::create("trees".to_string() + "/" + &repo_name + ".tree")?;
 
             response = Response {
                 status_code: status_code,

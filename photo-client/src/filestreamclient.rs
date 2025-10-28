@@ -12,7 +12,7 @@ use bincode::encode_into_slice;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use crate::app::RepoConfig;
-use crate::app::{Commands, Config};
+use crate::app::{Commands};
 use shared::{read_response, Response};
 use std::sync::mpsc;
 use crate::client::{ Log};
