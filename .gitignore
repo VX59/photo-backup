@@ -6,5 +6,6 @@
 /photo-client/last_backup.txt
 /photo-client/photo-client-config.json
 /photo-server/photo-server-config.json
+**/photo-server/trees/*.tree
 *.log
 *.tmp

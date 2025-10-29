@@ -10,6 +10,66 @@ use shared::{read_request, send_response, Request, RequestTypes, Response, Respo
 
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
+
+pub struct Tree {
+    pub version: u32,
+    pub content: HashMap<String,Vec<String>>, // a list of every directory's contents
+    pub history: HashMap<u32,String>, // a list of modifications
+    pub path: String,
+}
+
+impl Tree {
+    pub fn load_from_file(path: &str) -> Self {
+        let tree_content = std::fs::read_to_string(path)
+        .unwrap_or_else(|_| {
+            println!("Tree file not found, using default tree.");
+            String::new()
+        });
+        serde_json::from_str(&tree_content).unwrap_or_else(|_| {
+            println!("Failed to parse tree file, using default tree.");
+            Tree::default()
+        })
+    }
+
+    pub fn save_to_file(&self, path: &str) {
+        if let Ok(tree_content) = serde_json::to_string_pretty(self) {
+            if let Err(e) = std::fs::write(path, tree_content) {
+                eprintln!("Failed to write tree file: {}", e);
+
+            }
+        }   
+    }
+    
+    pub fn apply_history(&mut self, history_index:u32) {
+        if history_index <= self.version {
+            return;
+        }
+        
+        if let Some(path_str) = self.history.get(&self.version) {
+            let path: Vec<&str> =   path_str.split('/').skip(2).collect();
+            for window in path.windows(2) {
+                let parent = window[0].to_string();
+                let child = window[1].to_string();
+
+                let entry = self.content.entry(parent)
+                    .or_insert_with(Vec::new);
+                if !entry.contains(&child) {
+                    entry.push(child);
+                }
+            }
+        }
+        self.version += 1;
+        self.apply_history(history_index);
+    }
+
+    pub fn add_history(&mut self, new_entry:String) {
+        if self.history.values().last() != Some(&new_entry) {
+            self.history.insert(self.version, new_entry);
+        };
+    }
+}
+
+#[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
     pub repo_list: Vec<String>,
     pub path: String,
@@ -17,15 +77,15 @@ pub struct Config {
 
 impl Config {
     pub fn load_from_file(path: &str) -> Self {
-    let config_content = std::fs::read_to_string(path)
+        let config_content = std::fs::read_to_string(path)
         .unwrap_or_else(|_| {
             println!("Config file not found, using default configuration.");
             String::new()
         });
-    serde_json::from_str(&config_content).unwrap_or_else(|_| {
-        println!("Failed to parse config file, using default configuration.");
-        Config::default()
-    })
+        serde_json::from_str(&config_content).unwrap_or_else(|_| {
+            println!("Failed to parse config file, using default configuration.");
+            Config::default()
+        })
     }
 
     pub fn save_to_file(&self, path: &str) {
@@ -158,9 +218,20 @@ impl PhotoServerRequestHandler {
 
             // save it to the config
             self.config.add_repo(repo_name.clone());
-            // create the tree
-            std::fs::File::create("trees".to_string() + "/" + &repo_name + ".tree")?;
+            
+            // load the tree
+            let tree_path = std::path::PathBuf::from("trees".to_string() + "/" + &repo_name + ".tree");
 
+            if !tree_path.clone().exists() {
+                if let Err(e) = std::fs::File::create(&tree_path) {
+                    println!("Unable to create the tree file. {}", e);
+                }
+            }
+
+            let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+            tree.path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
+            tree.save_to_file(&tree.path);
+            
             response = Response {
                 status_code: status_code,
                 status_message: status_message.to_string(),
