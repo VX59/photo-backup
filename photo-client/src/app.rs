@@ -1,6 +1,8 @@
 use egui::ahash::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fs::File;
+use std::ops::SubAssign;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -54,14 +56,18 @@ impl std::fmt::Display for ConnectionStatus {
     }
 }
 
+pub struct FileSystemEntry {
+    pub name: String,
+    pub is_directory: bool,
+}
 pub struct UiState {
     pub show_create_ui: bool,
     pub new_repo_name: String,
     pub selected_repo: Option<usize>,
     pub connection_status: ConnectionStatus,
     pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
-    pub file_explorer_path:Option<String>,
-    pub subdir_contents:Option<Vec<String>>,
+    pub file_explorer_path:Vec<String>,
+    pub subdir_contents:Option<Vec<FileSystemEntry>>,
 }
 
 impl Default for UiState {
@@ -72,7 +78,7 @@ impl Default for UiState {
             new_repo_name: String::new(),
             selected_repo: None,
             repo_status: std::collections::HashMap::new(),
-            file_explorer_path: None,
+            file_explorer_path: Vec::new(),
             subdir_contents: None,
         }
     }
@@ -225,8 +231,8 @@ impl ConfigApp {
                         cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
                         self.app_tx.send(Commands::GetSubDir(repo_name.clone(), tree)).unwrap();
                     }
-                    // fix this
-                    self.ui.file_explorer_path = Some(repo_name.clone());
+                    self.ui.file_explorer_path.clear();
+                    self.ui.file_explorer_path.push(repo_name);
                 }
             }
             if ui.button("New Repository").clicked() {
@@ -392,12 +398,35 @@ impl ConfigApp {
       if self.ui.connection_status == ConnectionStatus::Connected {
         ui.vertical(|ui| {
             ui.heading("File Explorer");
-            if let Some(path) = &self.ui.file_explorer_path {
-                ui.label(format!("Current Path: {}", path));
+            ui.horizontal(|ui| {
+            for i in 0..self.ui.file_explorer_path.len() {
+                let subdir = self.ui.file_explorer_path[i].clone();
+                if ui.button(format!("/{}", subdir)).clicked() {
+                    self.ui.file_explorer_path.truncate(i+1);
+                    if let Some(selected_repo) = &self.ui.selected_repo {
+                        let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
+                        let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+                        self.app_tx.send(Commands::GetSubDir(subdir.clone(), tree)).unwrap();
+                    }
+                    break;
+                };
             }
+            });
+            
             if let Some(contents) = &self.ui.subdir_contents {
                 for entry in contents {
-                    ui.label(entry);
+                    if entry.is_directory{
+                        if ui.button(entry.name.to_string()).clicked() {
+                            self.ui.file_explorer_path.push(entry.name.clone());
+                            if let Some(selected_repo) = &self.ui.selected_repo {
+                                let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
+                                let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+                                self.app_tx.send(Commands::GetSubDir(entry.name.clone(), tree)).unwrap();
+                            }
+                        }
+                    } else {
+                        ui.label(entry.name.clone());
+                    }
                 }
             } else {
                 ui.label("No directory selected");
@@ -415,8 +444,19 @@ impl ConfigApp {
 
                 Commands::GetSubDir(subdir_name, tree) => {
                     let contents = tree.content.get(&subdir_name);
+                    let mut fs_entries:Vec<FileSystemEntry> = Vec::new();
                     if let Some(contents) = contents {
-                        self.ui.subdir_contents = Some(contents.clone());
+                        for entry in contents {
+                            let mut fs_entry = FileSystemEntry {
+                                name: entry.clone(),
+                                is_directory: false,
+                            };
+                            if tree.content.contains_key(entry) {
+                                fs_entry .is_directory = true;
+                            }
+                            fs_entries.push(fs_entry);
+                        }
+                        self.ui.subdir_contents = Some(fs_entries);
                     }
                 }
 

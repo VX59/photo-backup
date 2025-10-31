@@ -1,20 +1,22 @@
 {
-  "version": 5,
+  "version": 6,
   "content": {
     "test": [
       "Screenshot from 2025-10-30 00-37-06.png",
       "Screenshot from 2025-10-30 00-35-05.png",
       "Screenshot from 2025-10-30 00-40-13.png",
       "Screenshot from 2025-10-30 00-38-09.png",
-      "Screenshot from 2025-10-31 00-04-25.png"
+      "Screenshot from 2025-10-31 00-04-25.png",
+      "Screenshot from 2025-10-31 15-17-31.png"
     ]
   },
   "history": {
-    "1": "+./storage/test/Screenshot from 2025-10-30 00-35-05.png",
     "2": "+./storage/test/Screenshot from 2025-10-30 00-40-13.png",
     "4": "+./storage/test/Screenshot from 2025-10-31 00-04-25.png",
     "3": "+./storage/test/Screenshot from 2025-10-30 00-38-09.png",
-    "0": "+./storage/test/Screenshot from 2025-10-30 00-37-06.png"
+    "0": "+./storage/test/Screenshot from 2025-10-30 00-37-06.png",
+    "5": "+./storage/test/Screenshot from 2025-10-31 15-17-31.png",
+    "1": "+./storage/test/Screenshot from 2025-10-30 00-35-05.png"
   },
   "path": "trees/test.tree"
 }
