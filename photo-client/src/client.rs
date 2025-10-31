@@ -124,15 +124,22 @@ impl ImageClient {
                                             self.trees.insert(repo_name.clone(), Tree::load_from_file( &("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
                                         }
                                         let tree_updates:HashMap<u32,String> = serde_json::from_slice(&response.body)?;
-                                        let tree = self.trees.get_mut(&repo_name).unwrap();
+                                        
+                                        if tree_updates.len() == 0 {
+                                            self.app_tx.send(Commands::Log(format!("No tree updates for {}", repo_name)))?;
+                                            continue;
+                                        } else {
+                                            let tree = self.trees.get_mut(&repo_name).unwrap();
 
-                                        let version = tree_updates.keys().cloned().max().unwrap_or(0);
-                                        for (_, history_entry) in tree_updates {
-                                            tree.add_history( history_entry);
+                                            let version = tree_updates.keys().cloned().max().unwrap_or(0);
+
+                                            for (_, history_entry) in tree_updates {
+                                                tree.add_history( history_entry);
+                                            }
+                                            tree.apply_history(version);
+                                            self.app_tx.send(Commands::Log(format!("Applying history from index {} to {}", version-tree.version, version)))?;
+                                            tree.save_to_file(&tree.path);
                                         }
-                                        tree.apply_history(version);
-                                        self.app_tx.send(Commands::Log(format!("Applying history from index {} to {}", version-tree.version, version)))?;
-                                        tree.save_to_file(&tree.path);
                                     }
                                 }
                            }
@@ -331,9 +338,6 @@ impl ImageClient {
 
         self.config.repo_config.insert(repo_name, repo_config);
         self.config.save_to_file("photo-client-config.json");
-
-        
-
         Ok(())
         
     }

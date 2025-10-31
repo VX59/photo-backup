@@ -31,6 +31,7 @@ pub enum Commands {
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),
     GetRepoTree(String,u32),
+    GetSubDir(String, Tree),
 }
 
 #[derive(PartialEq)]
@@ -60,6 +61,7 @@ pub struct UiState {
     pub connection_status: ConnectionStatus,
     pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
     pub file_explorer_path:Option<String>,
+    pub subdir_contents:Option<Vec<String>>,
 }
 
 impl Default for UiState {
@@ -71,6 +73,7 @@ impl Default for UiState {
             selected_repo: None,
             repo_status: std::collections::HashMap::new(),
             file_explorer_path: None,
+            subdir_contents: None,
         }
     }
 }
@@ -213,7 +216,17 @@ impl ConfigApp {
                 let selected = self.ui.selected_repo == Some(i);
                 if ui.selectable_label(selected,*repo).clicked() {
                     /**/
-                    self.ui.selected_repo = Some(i)
+                    self.ui.selected_repo = Some(i);
+                    let repo_name = repo.to_string();
+                    if let Some(cli_tx) = &self.cli_tx {
+                        let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+                        tree.path = "trees".to_string() + "/" + &repo_name + ".tree";
+                        Tree::save_to_file(&tree, &tree.path);
+                        cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
+                        self.app_tx.send(Commands::GetSubDir(repo_name.clone(), tree)).unwrap();
+                    }
+                    // fix this
+                    self.ui.file_explorer_path = Some(repo_name.clone());
                 }
             }
             if ui.button("New Repository").clicked() {
@@ -356,17 +369,6 @@ impl ConfigApp {
                         }
                     }
                 }
-
-                if self.ui.file_explorer_path == None {
-                    if let Some(cli_tx) = &self.cli_tx {
-                        let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-                        tree.path = "trees".to_string() + "/" + &repo_name + ".tree";
-                        Tree::save_to_file(&tree, &tree.path);
-                        cli_tx.send(Commands::GetRepoTree(repo_name.to_string(),tree.version)).unwrap();
-                    }
-                    // fix this
-                    self.ui.file_explorer_path = Some(repo_name.clone());
-                }
             } else {
                 ui.label("Select a repository to see more details");
             }
@@ -380,15 +382,26 @@ impl ConfigApp {
                 self.repository_list(ui);
                 ui.separator();
                 self.repository_controls(ui);
+                ui.separator();
+                self.file_explorer(ui);
             });
         }
     }
 
-    fn file_explorer(&mut self, ui: &mut egui::Ui, path:&mut String) {
+    fn file_explorer(&mut self, ui: &mut egui::Ui) {
       if self.ui.connection_status == ConnectionStatus::Connected {
-          ui.vertical(|ui| {
-            ui.label("File Explorer");
-
+        ui.vertical(|ui| {
+            ui.heading("File Explorer");
+            if let Some(path) = &self.ui.file_explorer_path {
+                ui.label(format!("Current Path: {}", path));
+            }
+            if let Some(contents) = &self.ui.subdir_contents {
+                for entry in contents {
+                    ui.label(entry);
+                }
+            } else {
+                ui.label("No directory selected");
+            }
           });
       }  
     }
@@ -399,6 +412,14 @@ impl ConfigApp {
                 Commands::Log(msg) => {
                     writeln!(self.log_file, "{}", msg).ok();
                 }
+
+                Commands::GetSubDir(subdir_name, tree) => {
+                    let contents = tree.content.get(&subdir_name);
+                    if let Some(contents) = contents {
+                        self.ui.subdir_contents = Some(contents.clone());
+                    }
+                }
+
                 Commands::PostRepos(repos) => {       
                     self.ui.selected_repo = None;
                     self.ui.repo_status.clear();             

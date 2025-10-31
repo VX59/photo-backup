@@ -272,7 +272,7 @@ impl PhotoServerRequestHandler {
         let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
 
         let response: Response;
-        if tree.version > version {
+        if tree.version >= version {
             let updates = tree.history.iter()
                 .filter(|(v, _)| v > &&version)
                 .map(|(&v, entry)| (v, entry.clone()))
