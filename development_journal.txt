@@ -47,3 +47,10 @@ add feature to upload gifs
 add feature to upload generic files
 add features to track file modifications when they get saved
 add connection auth - both client and server exchange challenges. the server proves it has the right key, the client proves it has its own private key.
+
+To make the file explorer, we can have the server maintain a list of the file names and subdirectories formatted in json, We can track the progess of the tree
+by incrementing a counter whenever the tree is modified to add a new entry or edit an entry. Then the counter starts at 0 and is n after the nth change to the tree.
+each client obtains a copy of the file tree for some repoitory, and when the file tree is requested upon opening the file explorer.
+The client requests the tree by sending its version number c_n, The server checks if c_n < n, if it is then the server sends back the updated copy of the tree,
+and the client sets its version number to c_n = n. If the client already had the most recent version then we need to aknowledge that the client has the most recent version.
+We can save each modification so that we don't have to send the entire tree each time, we just send the changes and the client will apply those.

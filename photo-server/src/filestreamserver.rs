@@ -1,7 +1,7 @@
 use std::{
     io::{prelude::*}, net::{TcpListener, TcpStream}, thread::{JoinHandle}
 };
-use crate::request_handler::Tree;
+use shared::{Tree};
 use anyhow::Result;
 use std::path::Path;
 use::bincode::{config};
@@ -99,7 +99,7 @@ impl FileStreamServer {
         let image_path = image_loc.join(file_header.file_name);
 
         let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &self.repo_name + ".tree").to_string());
-        tree.add_history(format!("+{}", image_path.to_str().unwrap().to_string()));
+        tree.add_history( format!("+{}", image_path.to_str().unwrap().to_string()));
         tree.apply_history(tree.version + 1);
         tree.save_to_file(&tree.path);
 

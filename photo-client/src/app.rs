@@ -5,7 +5,10 @@ use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::io::{Read,Write};
+use shared::Tree;
 use egui::{Color32, RichText, Frame, Checkbox};
+use crate::client::ImageClient;
+
 pub struct ConfigApp {
     pub config: Config,
     pub config_path: PathBuf,
@@ -27,6 +30,7 @@ pub enum Commands {
     DisconnectStream(String),
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),
+    GetRepoTree(String,u32),
 }
 
 #[derive(PartialEq)]
@@ -55,6 +59,7 @@ pub struct UiState {
     pub selected_repo: Option<usize>,
     pub connection_status: ConnectionStatus,
     pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
+    pub file_explorer_path:Option<String>,
 }
 
 impl Default for UiState {
@@ -65,11 +70,23 @@ impl Default for UiState {
             new_repo_name: String::new(),
             selected_repo: None,
             repo_status: std::collections::HashMap::new(),
+            file_explorer_path: None,
         }
     }
 }
 
-use crate::client::ImageClient;
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
+pub struct RepoConfig {
+    pub auto_connect: bool,
+    pub watch_directory: String,
+}
+
+#[derive(Serialize,Deserialize, Default, Debug, Clone)]
+pub struct Config {
+    pub server_address: String,
+    pub server_storage_directory: String,
+    pub repo_config: HashMap<String, RepoConfig>,
+}
 
 impl Config {
     pub fn load_from_file(path: &str) -> Self {
@@ -92,19 +109,6 @@ impl Config {
             }
         }   
     }
-}
-
-#[derive(Serialize, Deserialize, Default, Debug, Clone)]
-pub struct RepoConfig {
-    pub auto_connect: bool,
-    pub watch_directory: String,
-}
-
-#[derive(Serialize,Deserialize, Default, Debug, Clone)]
-pub struct Config {
-    pub server_address: String,
-    pub server_storage_directory: String,
-    pub repo_config: HashMap<String, RepoConfig>,
 }
 
 impl ConfigApp {
@@ -351,7 +355,18 @@ impl ConfigApp {
                             cli_tx.send(Commands::RemoveRepository(repo_name.to_string())).unwrap();
                         }
                     }
-                }                            
+                }
+
+                if self.ui.file_explorer_path == None {
+                    if let Some(cli_tx) = &self.cli_tx {
+                        let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+                        tree.path = "trees".to_string() + "/" + &repo_name + ".tree";
+                        Tree::save_to_file(&tree, &tree.path);
+                        cli_tx.send(Commands::GetRepoTree(repo_name.to_string(),tree.version)).unwrap();
+                    }
+                    // fix this
+                    self.ui.file_explorer_path = Some(repo_name.clone());
+                }
             } else {
                 ui.label("Select a repository to see more details");
             }

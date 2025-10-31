@@ -4,70 +4,10 @@ collections::HashMap, net::{TcpListener, TcpStream}
 use serde::Deserialize;
 use serde::Serialize;
 use rand::{Rng};
+use serde_json;
 use std::path::Path;
 use crate::filestreamserver::{initiate_file_streaming_server};
-use shared::{read_request, send_response, Request, RequestTypes, Response, ResponseCodes};
-
-
-#[derive(Serialize,Deserialize, Default, Debug, Clone)]
-
-pub struct Tree {
-    pub version: u32,
-    pub content: HashMap<String,Vec<String>>, // a list of every directory's contents
-    pub history: HashMap<u32,String>, // a list of modifications
-    pub path: String,
-}
-
-impl Tree {
-    pub fn load_from_file(path: &str) -> Self {
-        let tree_content = std::fs::read_to_string(path)
-        .unwrap_or_else(|_| {
-            println!("Tree file not found, using default tree.");
-            String::new()
-        });
-        serde_json::from_str(&tree_content).unwrap_or_else(|_| {
-            println!("Failed to parse tree file, using default tree.");
-            Tree::default()
-        })
-    }
-
-    pub fn save_to_file(&self, path: &str) {
-        if let Ok(tree_content) = serde_json::to_string_pretty(self) {
-            if let Err(e) = std::fs::write(path, tree_content) {
-                eprintln!("Failed to write tree file: {}", e);
-
-            }
-        }   
-    }
-    
-    pub fn apply_history(&mut self, history_index:u32) {
-        if history_index <= self.version {
-            return;
-        }
-        
-        if let Some(path_str) = self.history.get(&self.version) {
-            let path: Vec<&str> =   path_str.split('/').skip(2).collect();
-            for window in path.windows(2) {
-                let parent = window[0].to_string();
-                let child = window[1].to_string();
-
-                let entry = self.content.entry(parent)
-                    .or_insert_with(Vec::new);
-                if !entry.contains(&child) {
-                    entry.push(child);
-                }
-            }
-        }
-        self.version += 1;
-        self.apply_history(history_index);
-    }
-
-    pub fn add_history(&mut self, new_entry:String) {
-        if self.history.values().last() != Some(&new_entry) {
-            self.history.insert(self.version, new_entry);
-        };
-    }
-}
+use shared::{read_request, send_response, Request, RequestTypes, Response, ResponseCodes, Tree};
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
@@ -142,6 +82,7 @@ impl PhotoServerRequestHandler {
                 RequestTypes::StartStream => self.StartStream(request)?,
                 RequestTypes::DisconnectStream => self.DisconnectStream(request)?,
                 RequestTypes::RemoveRepository => self.RemoveRepository(request)?,
+                RequestTypes::GetRepoTree => self.GetRepoTree(request)?,
                 _ => {},
             }
         }
@@ -313,6 +254,44 @@ impl PhotoServerRequestHandler {
                 }
             }
         };
+
+        send_response(response, &mut self.stream)?;
+        Ok(())
+    }
+
+    fn GetRepoTree(&mut self, request:Request) -> anyhow::Result<()> {
+        let body = serde_json::from_slice::<HashMap<String, serde_json::Value>>(&request.body)?;
+        let repo_name = body.get("repo_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let version = body.get("version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+
+        let response: Response;
+        if tree.version > version {
+            let updates = tree.history.iter()
+                .filter(|(v, _)| v > &&version)
+                .map(|(&v, entry)| (v, entry.clone()))
+                .collect::<HashMap<u32, String>>();
+            
+            let response_body = serde_json::to_vec(&updates)?;
+            response = Response {
+                status_code: ResponseCodes::OK,
+                status_message: "Missing updates".to_string(),
+                body: response_body,
+            };
+        }
+        else {
+            response = Response {
+                status_code: ResponseCodes::OK,
+                status_message: "No updates".to_string(),
+                body: Vec::new(),
+            };
+        }
 
         send_response(response, &mut self.stream)?;
         Ok(())

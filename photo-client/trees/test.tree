@@ -1,0 +1,18 @@
+{
+  "version": 4,
+  "content": {
+    "test": [
+      "Screenshot from 2025-10-30 00-40-13.png",
+      "Screenshot from 2025-10-30 00-35-05.png",
+      "Screenshot from 2025-10-30 00-37-06.png",
+      "Screenshot from 2025-10-30 00-38-09.png"
+    ]
+  },
+  "history": {
+    "3": "+./storage/test/Screenshot from 2025-10-30 00-38-09.png",
+    "2": "+./storage/test/Screenshot from 2025-10-30 00-37-06.png",
+    "1": "+./storage/test/Screenshot from 2025-10-30 00-35-05.png",
+    "0": "+./storage/test/Screenshot from 2025-10-30 00-40-13.png"
+  },
+  "path": "trees/test.tree"
+}

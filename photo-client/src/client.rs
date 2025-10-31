@@ -1,17 +1,15 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::thread::JoinHandle;
-use egui::response;
-use shared::send_request;
-use shared::RequestTypes;
-use shared::Response;
-use shared::ResponseCodes;
+use serde_json::json;
+use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use shared::{read_response, Request};
 use crate::app::ConnectionStatus;
 use crate::app::RepoConfig;
-use crate::app::{Commands,Config};
+use crate::app::{Commands, Config};
 use crate::filestreamclient::FileStreamClient;
 
 pub struct ImageClient {
@@ -21,6 +19,7 @@ pub struct ImageClient {
     config: Config,
     command_stream: Option<TcpStream>,
     repo_threads: HashMap<String, (std::thread::JoinHandle<()>,std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    trees: HashMap<String,Tree>
 }
 
 impl ImageClient {
@@ -34,12 +33,16 @@ impl ImageClient {
             config: Config::load_from_file(config_path.to_str().unwrap()),
             command_stream: None,
             repo_threads: HashMap::new(),
+            trees: HashMap::new()
         }
     }
 
     pub fn connect(&mut self) -> anyhow::Result<()> {
         match TcpStream::connect(self.config.server_address.as_str()) {
             Ok(s) => {
+                if std::path::Path::new("photo-client/trees").exists() == false {
+                    std::fs::create_dir_all("trees")?;
+                }
                 self.command_stream = Some(s);
 
                 // Handle the connection response
@@ -98,6 +101,43 @@ impl ImageClient {
                         Commands::CreateRepo(msg) => {
                             self.create_repository(msg.to_string())?;
                         }
+
+                        Commands::GetRepoTree(repo_name, version) => {
+                            let body = json!({
+                                "repo_name": repo_name,
+                                "version": version,
+                            });
+                            if let Some(stream) = self.command_stream.as_mut() {
+                                let request = Request {
+                                    request_type: RequestTypes::GetRepoTree,
+                                    body: serde_json::to_vec(&body)?,
+                                };
+
+                                send_request(request, stream)?;
+                                let response = read_response(stream)?;
+                                self.log_response(&response)?;
+
+                                // update the app etc
+                                if response.status_code == ResponseCodes::OK {
+                                    if response.body.len() > 0 {
+                                        if self.trees.contains_key(&repo_name) == false {
+                                            self.trees.insert(repo_name.clone(), Tree::load_from_file( &("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
+                                        }
+                                        let tree_updates:HashMap<u32,String> = serde_json::from_slice(&response.body)?;
+                                        let tree = self.trees.get_mut(&repo_name).unwrap();
+
+                                        let version = tree_updates.keys().cloned().max().unwrap_or(0);
+                                        for (_, history_entry) in tree_updates {
+                                            tree.add_history( history_entry);
+                                        }
+                                        tree.apply_history(version);
+                                        self.app_tx.send(Commands::Log(format!("Applying history from index {} to {}", version-tree.version, version)))?;
+                                        tree.save_to_file(&tree.path);
+                                    }
+                                }
+                           }
+                        }
+
                         Commands::StartStream(repo) => {
 
                             // request a file streaming channel - the server will open another port
@@ -291,6 +331,8 @@ impl ImageClient {
 
         self.config.repo_config.insert(repo_name, repo_config);
         self.config.save_to_file("photo-client-config.json");
+
+        
 
         Ok(())
         
