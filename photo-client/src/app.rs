@@ -429,7 +429,7 @@ impl ConfigApp {
                     }
                 }
             } else {
-                ui.label("No directory selected");
+                ui.label("Directory is Empty");
             }
           });
       }  
@@ -445,6 +445,7 @@ impl ConfigApp {
                 Commands::GetSubDir(subdir_name, tree) => {
                     let contents = tree.content.get(&subdir_name);
                     let mut fs_entries:Vec<FileSystemEntry> = Vec::new();
+                    self.ui.subdir_contents = None;
                     if let Some(contents) = contents {
                         for entry in contents {
                             let mut fs_entry = FileSystemEntry {
