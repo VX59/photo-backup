@@ -103,10 +103,11 @@ pub fn send_request(request:Request, stream:&mut TcpStream) -> Result<(), std::i
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Tree {
-    pub version: u32,
+    pub version: i32,
     pub content: HashMap<String,Vec<String>>, // a list of every directory's contents
-    pub history: HashMap<u32,String>, // a list of modifications
+    pub history: HashMap<i32,String>, // a list of modifications
     pub path: String,
+    pub name: String,
 }
 
 impl Tree {
@@ -131,10 +132,10 @@ impl Tree {
         }   
     }
     
-    pub fn apply_history(&mut self, history_index:u32) {
+    pub fn apply_history(&mut self, history_index:i32) {
         let start_index = history_index-self.version;
-        for i in start_index..=self.version {
-            if let Some(path_str) = self.history.get(&i) {
+        for i in start_index..=self.version{
+            if let Some(path_str) = self.history.get(&(i as i32)) {
                 let path: Vec<&str> =   path_str.split('/').skip(2).collect();
                 for window in path.windows(2) {
                     let parent = window[0].to_string();

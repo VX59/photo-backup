@@ -95,6 +95,8 @@ impl PhotoServerRequestHandler {
             .to_string();
 
         self.config.remove_repo(repo_name.clone());
+        let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+        std::fs::remove_file(tree.path)?;
         let repo_path = std::path::Path::new(&self.storage_directory).join(repo_name.clone());
         std::fs::remove_dir_all(repo_path)?;
 
@@ -171,6 +173,7 @@ impl PhotoServerRequestHandler {
 
             let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
             tree.path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
+            tree.name = repo_name.clone();
             tree.save_to_file(&tree.path);
             
             response = Response {
@@ -267,7 +270,7 @@ impl PhotoServerRequestHandler {
             .to_string();
         let version = body.get("version")
             .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
+            .unwrap_or(0) as i32;
 
         let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
 
@@ -276,7 +279,7 @@ impl PhotoServerRequestHandler {
             let updates = tree.history.iter()
                 .filter(|(v, _)| v > &&version)
                 .map(|(&v, entry)| (v, entry.clone()))
-                .collect::<HashMap<u32, String>>();
+                .collect::<HashMap<i32, String>>();
             
             let response_body = serde_json::to_vec(&updates)?;
             response = Response {

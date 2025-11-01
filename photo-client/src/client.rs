@@ -123,7 +123,7 @@ impl ImageClient {
                                         if self.trees.contains_key(&repo_name) == false {
                                             self.trees.insert(repo_name.clone(), Tree::load_from_file( &("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
                                         }
-                                        let tree_updates:HashMap<u32,String> = serde_json::from_slice(&response.body)?;
+                                        let tree_updates:HashMap<i32,String> = serde_json::from_slice(&response.body)?;
                                         
                                         if tree_updates.len() == 0 {
                                             self.app_tx.send(Commands::Log(format!("No tree updates for {}", repo_name)))?;

@@ -32,8 +32,8 @@ pub enum Commands {
     DisconnectStream(String),
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),
-    GetRepoTree(String,u32),
-    GetSubDir(String, Tree),
+    GetRepoTree(String,i32),
+    GetSubDir(String),
 }
 
 #[derive(PartialEq)]
@@ -68,6 +68,7 @@ pub struct UiState {
     pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
     pub file_explorer_path:Vec<String>,
     pub subdir_contents:Option<Vec<FileSystemEntry>>,
+    pub tree: Option<Tree>,
 }
 
 impl Default for UiState {
@@ -80,6 +81,7 @@ impl Default for UiState {
             repo_status: std::collections::HashMap::new(),
             file_explorer_path: Vec::new(),
             subdir_contents: None,
+            tree: None,
         }
     }
 }
@@ -225,11 +227,14 @@ impl ConfigApp {
                     self.ui.selected_repo = Some(i);
                     let repo_name = repo.to_string();
                     if let Some(cli_tx) = &self.cli_tx {
-                        let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-                        tree.path = "trees".to_string() + "/" + &repo_name + ".tree";
-                        Tree::save_to_file(&tree, &tree.path);
-                        cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
-                        self.app_tx.send(Commands::GetSubDir(repo_name.clone(), tree)).unwrap();
+                        self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
+                        if let Some (tree) = &mut self.ui.tree {
+                            tree.name = repo_name.clone();
+                            tree.path = "trees".to_string() + "/" + &repo_name + ".tree";
+                            Tree::save_to_file(&tree, &tree.path);
+                            cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
+                            self.app_tx.send(Commands::GetSubDir(repo_name.clone())).unwrap();
+                        }
                     }
                     self.ui.file_explorer_path.clear();
                     self.ui.file_explorer_path.push(repo_name);
@@ -403,10 +408,14 @@ impl ConfigApp {
                 let subdir = self.ui.file_explorer_path[i].clone();
                 if ui.button(format!("/{}", subdir)).clicked() {
                     self.ui.file_explorer_path.truncate(i+1);
+
                     if let Some(selected_repo) = &self.ui.selected_repo {
-                        let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
-                        let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-                        self.app_tx.send(Commands::GetSubDir(subdir.clone(), tree)).unwrap();
+                        if self.ui.tree.is_none() {
+                            let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
+                            self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
+
+                        }
+                        self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
                     }
                     break;
                 };
@@ -419,9 +428,12 @@ impl ConfigApp {
                         if ui.button(entry.name.to_string()).clicked() {
                             self.ui.file_explorer_path.push(entry.name.clone());
                             if let Some(selected_repo) = &self.ui.selected_repo {
-                                let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
-                                let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-                                self.app_tx.send(Commands::GetSubDir(entry.name.clone(), tree)).unwrap();
+                                if self.ui.tree.is_none() {
+                                    let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
+                                    self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
+
+                                }
+                                self.app_tx.send(Commands::GetSubDir(entry.name.clone())).unwrap();
                             }
                         }
                     } else {
@@ -442,22 +454,19 @@ impl ConfigApp {
                     writeln!(self.log_file, "{}", msg).ok();
                 }
 
-                Commands::GetSubDir(subdir_name, tree) => {
-                    let contents = tree.content.get(&subdir_name);
-                    let mut fs_entries:Vec<FileSystemEntry> = Vec::new();
-                    self.ui.subdir_contents = None;
-                    if let Some(contents) = contents {
-                        for entry in contents {
-                            let mut fs_entry = FileSystemEntry {
-                                name: entry.clone(),
-                                is_directory: false,
-                            };
-                            if tree.content.contains_key(entry) {
-                                fs_entry .is_directory = true;
+                Commands::GetSubDir(subdir_name) => {
+                    if let Some(tree) = &self.ui.tree {
+                        if let Some(contents) = tree.content.get(&subdir_name) {
+                            let mut fs_entries:Vec<FileSystemEntry> = Vec::new();
+                            for entry in contents {
+                                let fs_entry = FileSystemEntry {
+                                    name: entry.clone(),
+                                    is_directory: tree.content.contains_key(entry),
+                                };
+                                fs_entries.push(fs_entry);
                             }
-                            fs_entries.push(fs_entry);
+                            self.ui.subdir_contents = Some(fs_entries);
                         }
-                        self.ui.subdir_contents = Some(fs_entries);
                     }
                 }
 
@@ -476,6 +485,14 @@ impl ConfigApp {
                 Commands::UpdateConnectionStatus(status) => self.ui.connection_status = status,
 
                 Commands::RemoveRepository(repo) => {
+                    if let Some(tree) = self.ui.tree.take() {
+                        let tree_path = tree.path.clone();
+                        std::fs::remove_file(tree_path).ok();
+                        self.ui.tree = None;
+                        self.ui.subdir_contents = None;
+                        self.ui.file_explorer_path.clear();
+                    }
+
                     self.config.repo_config.remove(&repo);
                     self.ui.repo_status.remove(&repo);
                     self.ui.selected_repo = None;
