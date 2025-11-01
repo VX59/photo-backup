@@ -13,20 +13,20 @@ Clone the Github repo to desired path
 Navigate to the "photo-server" directory
 `cd photo-backup/photo-server`
 Compile with `cargo build`
-run and build with `cargo run`
+Compile and build with `cargo run`
 
 # Installation Steps (Client)
 Clone the Github repo to desired path
 Navigate to the "photo-client" directory
 `cd photo-backup/photo-client`
 Compile with `cargo build`
-run and build with `cargo run`
+Compile and build with `cargo run`
 
-On the machine running the photo-server you currently need to create your storage directory within the "photo-server" folder.
+On the machine running the photo-server you currently need to create your storage directory within the "photo-server" folder
 Upon running the client the user will need to provide `hostname:8080`, by default the server runs on port 8080. You will also need to provide the storage directory relative to the "photo-server" folder. Then server will dispatch a request handler which the client will connect to.
 
 Once connected you will be able to view a list of repositories or create one. Selecting a repository will display a panel to manage the file streaming service. The file explorer allows you to view and navigate the structure of the repository.
 
-All responses from the server are logged in output.log.
+All responses from the server are logged in output.log
 At this point it is unsafe to modify any of the .tree files
 ![Ui as of 8/24/2025](./readme-images/ui-sample.png)

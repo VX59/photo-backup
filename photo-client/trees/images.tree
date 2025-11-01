@@ -1,0 +1,32 @@
+{
+  "version": 10,
+  "content": {
+    "images": [
+      "Screenshots"
+    ],
+    "Screenshots": [
+      "Screenshot from 2025-10-29 12-22-52.png",
+      "Screenshot from 2025-10-29 12-22-38.png",
+      "Screenshot from 2025-10-29 12-24-53.png",
+      "Screenshot from 2025-10-29 13-33-52.png",
+      "Screenshot from 2025-10-29 12-24-24.png",
+      "Screenshot from 2025-10-29 12-23-59.png",
+      "Screenshot from 2025-10-29 12-02-15.png",
+      "Screenshot from 2025-10-29 11-34-17.png",
+      "Screenshot from 2025-10-31 17-53-56.png"
+    ]
+  },
+  "history": {
+    "0": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-22-52.png",
+    "2": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-22-38.png",
+    "9": "+./storage/images/Screenshots/Screenshot from 2025-10-31 17-53-56.png",
+    "1": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-22-38.png",
+    "8": "+./storage/images/Screenshots/Screenshot from 2025-10-29 11-34-17.png",
+    "4": "+./storage/images/Screenshots/Screenshot from 2025-10-29 13-33-52.png",
+    "7": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-02-15.png",
+    "3": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-24-53.png",
+    "6": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-23-59.png",
+    "5": "+./storage/images/Screenshots/Screenshot from 2025-10-29 12-24-24.png"
+  },
+  "path": "trees/images.tree"
+}
