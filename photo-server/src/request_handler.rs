@@ -171,6 +171,7 @@ impl PhotoServerRequestHandler {
 
             let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
             tree.path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
+            tree.name = repo_name.clone();
             tree.save_to_file(&tree.path);
             
             response = Response {

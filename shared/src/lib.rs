@@ -107,6 +107,7 @@ pub struct Tree {
     pub content: HashMap<String,Vec<String>>, // a list of every directory's contents
     pub history: HashMap<u32,String>, // a list of modifications
     pub path: String,
+    pub name: String,
 }
 
 impl Tree {
@@ -126,7 +127,6 @@ impl Tree {
         if let Ok(tree_content) = serde_json::to_string_pretty(self) {
             if let Err(e) = std::fs::write(path, tree_content) {
                 eprintln!("Failed to write tree file: {}", e);
-
             }
         }   
     }

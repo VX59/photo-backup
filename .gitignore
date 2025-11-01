@@ -7,5 +7,6 @@
 /photo-client/photo-client-config.json
 /photo-server/photo-server-config.json
 **/photo-server/trees/*.tree
+**/photo-client/trees/*.tree
 *.log
 *.tmp
