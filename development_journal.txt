@@ -54,3 +54,9 @@ each client obtains a copy of the file tree for some repoitory, and when the fil
 The client requests the tree by sending its version number c_n, The server checks if c_n < n, if it is then the server sends back the updated copy of the tree,
 and the client sets its version number to c_n = n. If the client already had the most recent version then we need to aknowledge that the client has the most recent version.
 We can save each modification so that we don't have to send the entire tree each time, we just send the changes and the client will apply those.
+
+11/1/25
+Need to fix the tree history indexing on the client side,
+Need to fix the file system refresh button (repo list) so you dont have to click it twice
+Need to fix the first time connection not getting ack from server when uploading an image
+Deleting a repository still allows you use the file streaming client untill you disconnect from the main server

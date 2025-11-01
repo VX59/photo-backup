@@ -229,9 +229,6 @@ impl ConfigApp {
                     if let Some(cli_tx) = &self.cli_tx {
                         self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
                         if let Some (tree) = &mut self.ui.tree {
-                            tree.name = repo_name.clone();
-                            tree.path = "trees".to_string() + "/" + &repo_name + ".tree";
-                            Tree::save_to_file(&tree, &tree.path);
                             cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
                             self.app_tx.send(Commands::GetSubDir(repo_name.clone())).unwrap();
                         }

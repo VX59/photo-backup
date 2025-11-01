@@ -171,9 +171,14 @@ impl PhotoServerRequestHandler {
                 }
             }
 
-            let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-            tree.path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
-            tree.name = repo_name.clone();
+            let tree: Tree = Tree {
+                version: 0,
+                content: HashMap::new(),
+                history: HashMap::new(),
+                path: ("trees".to_string() + "/" + &repo_name + ".tree").to_string(),
+                name: repo_name.clone(),
+
+            };
             tree.save_to_file(&tree.path);
             
             response = Response {
