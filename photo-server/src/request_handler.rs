@@ -77,18 +77,18 @@ impl PhotoServerRequestHandler {
         loop {
             let request = read_request(&mut self.stream)?;
             match request.request_type {
-                RequestTypes::GetRepos => self.GetRepos()?,
-                RequestTypes::CreateRepo => self.CreateRepo(request)?,
-                RequestTypes::StartStream => self.StartStream(request)?,
-                RequestTypes::DisconnectStream => self.DisconnectStream(request)?,
-                RequestTypes::RemoveRepository => self.RemoveRepository(request)?,
-                RequestTypes::GetRepoTree => self.GetRepoTree(request)?,
+                RequestTypes::GetRepos => self.get_repos()?,
+                RequestTypes::CreateRepo => self.create_repo(request)?,
+                RequestTypes::StartStream => self.start_stream(request)?,
+                RequestTypes::DisconnectStream => self.disconnect_stream(request)?,
+                RequestTypes::RemoveRepository => self.remove_repository(request)?,
+                RequestTypes::GetRepoTree => self.get_repo_tree(request)?,
                 _ => {},
             }
         }
     }
 
-    fn RemoveRepository(&mut self, request:Request) -> anyhow::Result<()> {
+    fn remove_repository(&mut self, request:Request) -> anyhow::Result<()> {
         let repo_name = String::from_utf8_lossy(&request.body)
             .trim() 
             .replace(|c: char| c.is_control(), "_")
@@ -109,7 +109,7 @@ impl PhotoServerRequestHandler {
         Ok(())
     }
 
-    fn GetRepos(&mut self) -> anyhow::Result<()> {
+    fn get_repos(&mut self) -> anyhow::Result<()> {
         let response:Response;
 
         if self.config.repo_list.is_empty() {
@@ -133,7 +133,7 @@ impl PhotoServerRequestHandler {
         Ok(())
     }
 
-    fn CreateRepo(&mut self, request:Request) -> anyhow::Result<()> {
+    fn create_repo(&mut self, request:Request) -> anyhow::Result<()> {
         let repo_name = String::from_utf8_lossy(&request.body)
             .trim()         // removes leading/trailing whitespace
             .replace(|c: char| c.is_control(), "_") // replace control chars with _
@@ -192,7 +192,7 @@ impl PhotoServerRequestHandler {
         Ok(())
     }
 
-    fn StartStream(&mut self, request:Request) -> anyhow::Result<()> {
+    fn start_stream(&mut self, request:Request) -> anyhow::Result<()> {
         let repo_name = String::from_utf8_lossy(&request.body)
             .trim()         // removes leading/trailing whitespace
             .replace(|c: char| c.is_control(), "_") // replace control chars with _
@@ -230,7 +230,7 @@ impl PhotoServerRequestHandler {
         Ok(())
     }
 
-    fn DisconnectStream(&mut self, request:Request) -> anyhow::Result<()> {
+    fn disconnect_stream(&mut self, request:Request) -> anyhow::Result<()> {
         let repo_name = String::from_utf8_lossy(&request.body)
             .trim()         // removes leading/trailing whitespace
             .replace(|c: char| c.is_control(), "_") // replace control chars with _
@@ -267,7 +267,7 @@ impl PhotoServerRequestHandler {
         Ok(())
     }
 
-    fn GetRepoTree(&mut self, request:Request) -> anyhow::Result<()> {
+    fn get_repo_tree(&mut self, request:Request) -> anyhow::Result<()> {
         let body = serde_json::from_slice::<HashMap<String, serde_json::Value>>(&request.body)?;
         let repo_name = body.get("repo_name")
             .and_then(|v| v.as_str())
@@ -280,7 +280,7 @@ impl PhotoServerRequestHandler {
         let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
 
         let response: Response;
-        if tree.version >= version {
+        if tree.version > version {
             let updates = tree.history.iter()
                 .filter(|(v, _)| v > &&version)
                 .map(|(&v, entry)| (v, entry.clone()))

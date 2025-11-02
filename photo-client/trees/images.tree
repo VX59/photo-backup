@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "content": {
+    "Screenshots": [
+      "Screenshot from 2025-11-02 15-01-19.png"
+    ],
+    "images": [
+      "Screenshots"
+    ]
+  },
+  "history": {
+    "0": "+./storage/images/Screenshots/Screenshot from 2025-11-02 15-01-19.png"
+  },
+  "path": "trees/images.tree",
+  "name": "images"
+}

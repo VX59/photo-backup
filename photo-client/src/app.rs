@@ -1,8 +1,6 @@
 use egui::ahash::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fs::File;
-use std::ops::SubAssign;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -126,6 +124,9 @@ impl ConfigApp {
     fn connect_to_server (&mut self, ui:&mut egui::Ui) {
         if self.ui.connection_status == ConnectionStatus::Disconnected {
             if ui.button("Connect to server").clicked() {
+                self.ui.file_explorer_path.clear();
+                self.ui.subdir_contents = None;
+                self.ui.tree = None;
                 if self.config.server_address.is_empty() | self.config.server_storage_directory.is_empty() {
                     self.app_tx.send(Commands::Log("server address or storage directory not set".to_string())).unwrap();
                 } else {
@@ -223,9 +224,10 @@ impl ConfigApp {
             for (i,repo) in repo_names.iter().enumerate() {
                 let selected = self.ui.selected_repo == Some(i);
                 if ui.selectable_label(selected,*repo).clicked() {
-                    /**/
                     self.ui.selected_repo = Some(i);
                     let repo_name = repo.to_string();
+                    self.ui.file_explorer_path.clear();
+                    self.ui.file_explorer_path.push(repo_name.clone());
                     if let Some(cli_tx) = &self.cli_tx {
                         self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
                         if let Some (tree) = &mut self.ui.tree {
@@ -233,8 +235,6 @@ impl ConfigApp {
                             self.app_tx.send(Commands::GetSubDir(repo_name.clone())).unwrap();
                         }
                     }
-                    self.ui.file_explorer_path.clear();
-                    self.ui.file_explorer_path.push(repo_name);
                 }
             }
             if ui.button("New Repository").clicked() {

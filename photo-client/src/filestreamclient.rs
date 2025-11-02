@@ -1,3 +1,4 @@
+use core::prelude;
 use std::path::Path;
 use shared::FileHeader;
 use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
@@ -18,7 +19,6 @@ use std::sync::mpsc;
 use crate::client::{ Log};
 
 pub struct FileStreamClient {
-    name:String,
     stream:TcpStream,
     repo_config:RepoConfig,
     pub app_tx:mpsc::Sender<Commands>,
@@ -26,9 +26,8 @@ pub struct FileStreamClient {
 }
 
 impl FileStreamClient {
-    pub fn new(name:String, stream:TcpStream, repo_config:RepoConfig, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(stream:TcpStream, repo_config:RepoConfig, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         FileStreamClient { 
-            name,
             stream,
             repo_config,
             app_tx,
@@ -38,7 +37,12 @@ impl FileStreamClient {
 
     pub fn run(&mut self) -> anyhow::Result<()> {
         let (wtx, wrx) = channel();
-        let mut watcher = match RecommendedWatcher::new(move |res| wtx.send(res).unwrap(), notify::Config::default())
+        let mut watcher = match RecommendedWatcher::new(move |res| 
+            match wtx.send(res) {
+                Ok(res) => res,
+                Err(_) => {},
+
+            }, notify::Config::default())
             {
         Ok(w) => w,
         Err(e) => {
@@ -84,7 +88,7 @@ impl FileStreamClient {
         }
 
         self.stream.shutdown(std::net::Shutdown::Both).ok();
-        self.app_tx.send(Commands::Log("Repo client stopped.".to_string())).ok();
+        self.app_tx.send(Commands::Log("Repo client stopped.".to_string()))?;
 
         Ok(())
     }
@@ -139,7 +143,16 @@ impl FileStreamClient {
         }
 
         let repo_root = Path::new(&self.repo_config.watch_directory);
-        let relative_path = local_path.strip_prefix(repo_root).unwrap().parent().unwrap_or_else(|| Path::new("")).to_str().unwrap().to_string();
+        let relative_path = match local_path.strip_prefix(repo_root) {
+            Ok(path) => {
+                let parent_path = match path.parent().unwrap_or_else(|| Path::new("")).to_str() {
+                    Some(p) => p.to_string(),
+                    None => return Err(anyhow::anyhow!("Failed to get relative path")),
+                };
+                parent_path
+            },
+            Err(_) => return Err(anyhow::anyhow!("File is outside of repository root")),
+        };
         let file_header = FileHeader {
             file_name: file_name.to_string(), 
             relative_path: relative_path,

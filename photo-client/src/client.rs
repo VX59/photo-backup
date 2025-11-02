@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::hash::Hash;
 use std::thread::JoinHandle;
 use serde_json::json;
 use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree};
@@ -311,7 +310,7 @@ impl ImageClient {
                 let repo_config = rc.clone();
 
                 return Ok(std::thread::spawn(move || {
-                    let mut file_stream_client = FileStreamClient::new(repo,file_stream, repo_config, app_tx_clone, stop_flag_clone);
+                    let mut file_stream_client = FileStreamClient::new(file_stream, repo_config, app_tx_clone, stop_flag_clone);
                     if let Err(e) = file_stream_client.run() {
                         let _ = file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e)));
                     }

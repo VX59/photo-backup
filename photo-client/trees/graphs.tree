@@ -1,7 +1,19 @@
 {
-  "version": 0,
-  "content": {},
-  "history": {},
+  "version": 4,
+  "content": {
+    "graphs": [
+      "Screenshot from 2025-11-02 14-58-27.png",
+      "Screenshot from 2025-11-01 14-23-53.png",
+      "Screenshot from 2025-11-02 14-58-25.png",
+      "Screenshot from 2025-11-01 14-21-51.png"
+    ]
+  },
+  "history": {
+    "1": "+./storage/graphs/Screenshot from 2025-11-01 14-23-53.png",
+    "2": "+./storage/graphs/Screenshot from 2025-11-02 14-58-25.png",
+    "3": "+./storage/graphs/Screenshot from 2025-11-01 14-21-51.png",
+    "0": "+./storage/graphs/Screenshot from 2025-11-02 14-58-27.png"
+  },
   "path": "trees/graphs.tree",
   "name": "graphs"
 }
