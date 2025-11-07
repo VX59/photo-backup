@@ -106,7 +106,7 @@ impl FileStreamServer {
         println!("Receiving file: {} ({} bytes)", image_path.to_str().unwrap().to_string(), file_header.file_size);
 
         if std::path::Path::new(&image_loc).exists() == false {
-        std::fs::create_dir_all(&image_loc)?;
+            std::fs::create_dir_all(&image_loc)?;
         }
 
         image.save(std::path::Path::new(&image_path))?;

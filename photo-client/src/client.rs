@@ -120,17 +120,8 @@ impl ImageClient {
                                 if response.status_code == ResponseCodes::OK {
                                     if response.body.len() > 0 {
                                         if self.trees.contains_key(&repo_name) == false {
-                                            let tree = Tree {
-                                                version: 0,
-                                                content: HashMap::new(),
-                                                history: HashMap::new(),
-                                                path: ("trees".to_string() + "/" + &repo_name + ".tree").to_string(),
-                                                name: repo_name.clone(),
-                                            };
+                                            let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
                                             self.trees.insert(repo_name.clone(), tree.clone());
-                                            let path = tree.path.clone();
-                                            Tree::save_to_file(&tree,&path);
-
                                         }
                                         let tree_updates:HashMap<i32,String> = serde_json::from_slice(&response.body)?;
                                         
@@ -340,6 +331,14 @@ impl ImageClient {
 
             if response.status_code == ResponseCodes::OK {
                 self.get_repositories()?;
+                let tree:Tree = Tree {
+                    version: 0,
+                    content: HashMap::new(),
+                    history: HashMap::new(),
+                    path: ("trees".to_string() + "/" + &repo_name + ".tree").to_string(),
+                    name: repo_name.clone(),
+                };
+                Tree::save_to_file(&tree,&tree.path);
             }
         }
 

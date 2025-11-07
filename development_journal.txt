@@ -58,5 +58,14 @@ We can save each modification so that we don't have to send the entire tree each
 11/1/25
 Need to fix the tree history indexing on the client side,
 Need to fix the file system refresh button (repo list) so you dont have to click it twice
-Need to fix the first time connection not getting ack from server when uploading an image
-Deleting a repository still allows you use the file streaming client untill you disconnect from the main server
+Need to fix the first time connection not getting ack from server when uploading an image -- fixed
+Deleting a repository still allows you use the file streaming client untill you disconnect from the main server --fixed
+
+11/6/25
+fixed the mismatch in the tree indexing, now the client will show the first image uploaded, still need to fix the refresh on the file explorer.
+There is an issue where if you create a repository then connect to it in the client streem, it will successfully connect and either the request handler
+does not receive a request when a file is created or fails to upload the file sent, It is possibly related to when I am working with the tree in the filestreamserver.response
+Also there is a new intermittent bug, where I connected to a repo uploaded a file, disconnected from the server, reconnected to the server and repo, then saved another file
+then for some reason It uploaded 2 times to the same repo, not sure why I cant reproduce it consistently so maybe it was an issue,
+I need to go through all the resources and make sure things are synchronized, if its a shared resource such as the tree files then I need to add locks to them. 
+The reason you have to click the refresh button 2 times is probably because the client side tree is not synced properly between the app and the client.

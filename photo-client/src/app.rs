@@ -367,6 +367,10 @@ impl ConfigApp {
                         self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
                         if let Some(cli_tx) = &self.cli_tx {
                             cli_tx.send(Commands::DisconnectStream(repo_name.to_string())).unwrap();
+                            self.ui.file_explorer_path.clear();
+                            self.ui.subdir_contents = None;
+                            self.ui.tree = None;
+                            self.ui.selected_repo = None;
                         }
                     }
                     
@@ -399,7 +403,12 @@ impl ConfigApp {
     fn file_explorer(&mut self, ui: &mut egui::Ui) {
       if self.ui.connection_status == ConnectionStatus::Connected {
         ui.vertical(|ui| {
-            ui.heading("File Explorer");
+            ui.horizontal(|ui| {
+                ui.heading("File Explorer");
+                if let Some(tree) = &self.ui.tree {
+                    ui.label(format!("{} files, {} subdirs", tree.history.len(), tree.content.len()));
+                }
+            });
             ui.horizontal(|ui| {
             for i in 0..self.ui.file_explorer_path.len() {
                 let subdir = self.ui.file_explorer_path[i].clone();
@@ -452,6 +461,7 @@ impl ConfigApp {
                 }
 
                 Commands::GetSubDir(subdir_name) => {
+                    self.ui.subdir_contents = None;
                     if let Some(tree) = &self.ui.tree {
                         if let Some(contents) = tree.content.get(&subdir_name) {
                             let mut fs_entries:Vec<FileSystemEntry> = Vec::new();

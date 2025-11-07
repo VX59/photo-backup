@@ -162,23 +162,15 @@ impl PhotoServerRequestHandler {
             // save it to the config
             self.config.add_repo(repo_name.clone());
             
-            // load the tree
-            let tree_path = std::path::PathBuf::from("trees".to_string() + "/" + &repo_name + ".tree");
-
-            if !tree_path.clone().exists() {
-                if let Err(e) = std::fs::File::create(&tree_path) {
-                    println!("Unable to create the tree file. {}", e);
-                }
-            }
-
-            let tree: Tree = Tree {
+            // load a tree
+            let tree:Tree = Tree {
                 version: 0,
                 content: HashMap::new(),
                 history: HashMap::new(),
                 path: ("trees".to_string() + "/" + &repo_name + ".tree").to_string(),
                 name: repo_name.clone(),
-
             };
+            
             tree.save_to_file(&tree.path);
             
             response = Response {
@@ -282,7 +274,13 @@ impl PhotoServerRequestHandler {
         let response: Response;
         if tree.version > version {
             let updates = tree.history.iter()
-                .filter(|(v, _)| v > &&version)
+                .filter(|(v, _)| {
+                    if version > 0 {
+                        *v > &version
+                    } else {
+                        *v >= &version
+                    }
+                    })
                 .map(|(&v, entry)| (v, entry.clone()))
                 .collect::<HashMap<i32, String>>();
             
