@@ -4,13 +4,13 @@ use serde::Serialize;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::io::{Read,Write};
+use std::io::{Write};
 use shared::Tree;
 use egui::{Color32, RichText, Frame, Checkbox};
 use crate::client::ImageClient;
 
-pub struct ConfigApp {
-    pub config: Config,
+pub struct AppConfig {
+    pub config: ClientConfig,
     pub config_path: PathBuf,
     pub log_file: std::fs::File,
     pub client_handle: Option<std::thread::JoinHandle<()>>,
@@ -24,9 +24,10 @@ pub struct ConfigApp {
 pub enum Commands {
     Log(String),
     CreateRepo(String),
+    SetStoragePath(String),
     PostRepos(Vec<String>),
     UpdateRepoStatus((String, ConnectionStatus)),
-    StartStream(String),
+    StartStream(String, String),
     DisconnectStream(String),
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),
@@ -91,13 +92,13 @@ pub struct RepoConfig {
 }
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
-pub struct Config {
+pub struct ClientConfig {
     pub server_address: String,
     pub server_storage_directory: String,
     pub repo_config: HashMap<String, RepoConfig>,
 }
 
-impl Config {
+impl ClientConfig {
     pub fn load_from_file(path: &str) -> Self {
         let config_content = std::fs::read_to_string(path)
             .unwrap_or_else(|_| {
@@ -106,7 +107,7 @@ impl Config {
             });
         serde_json::from_str(&config_content).unwrap_or_else(|_| {
             println!("Failed to parse config file, using default configuration.");
-            Config::default()
+            ClientConfig::default()
         })
     }
 
@@ -120,7 +121,7 @@ impl Config {
     }
 }
 
-impl ConfigApp {
+impl AppConfig {
     fn connect_to_server (&mut self, ui:&mut egui::Ui) {
         if self.ui.connection_status == ConnectionStatus::Disconnected {
             if ui.button("Connect to server").clicked() {
@@ -130,9 +131,6 @@ impl ConfigApp {
                 if self.config.server_address.is_empty() | self.config.server_storage_directory.is_empty() {
                     self.app_tx.send(Commands::Log("server address or storage directory not set".to_string())).unwrap();
                 } else {
-                    self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                    self.config.save_to_file(self.config_path.to_str().unwrap());
-
                     if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
                         self.ui.connection_status = ConnectionStatus::Connecting;
                         self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
@@ -180,8 +178,6 @@ impl ConfigApp {
     fn connect_config(&mut self, ui:&mut egui::Ui) {
         ui.label("Server Address:");
         ui.text_edit_singleline(&mut self.config.server_address);
-        ui.label("Global storage path on Server:");
-        ui.text_edit_singleline(&mut self.config.server_storage_directory);
     }
 
     fn connect_menu(&mut self, ui:&mut egui::Ui) {
@@ -211,12 +207,23 @@ impl ConfigApp {
                     self.connect_to_server(ui);
                 });
             });
-
         });
         self.connect_config(ui);
+
+        if self.ui.connection_status == ConnectionStatus::Connected {
+            ui.label("Global storage path on Server:");
+            ui.text_edit_singleline(&mut self.config.server_storage_directory);
+            if ui.button("Save Global-Storage Path").clicked() {
+                if let Some(cli_tx) = &self.cli_tx {
+                    let storage_path = self.config.server_storage_directory.clone();
+                    cli_tx.send(Commands::SetStoragePath(storage_path)).unwrap()
+                }
+            }
+        }
     }
 
     fn repository_list(&mut self, ui: &mut egui::Ui) {
+ 
         ui.vertical(|ui| {
             ui.heading("Repositories");
 
@@ -307,15 +314,12 @@ impl ConfigApp {
 
                 ui.text_edit_singleline(&mut repo_config.watch_directory);
                 
-                if !repo_config.watch_directory.is_empty() && std::path::Path::new(&repo_config.watch_directory).exists() == true {
+                if !repo_config.watch_directory.is_empty() && std::path::Path::new(&repo_config.watch_directory).exists() {
                     if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Disconnected) {
                         if ui.button("Connect").clicked() {
-                            self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                            self.config.save_to_file(self.config_path.to_str().unwrap());
-
                             self.ui.repo_status.insert(repo_name.to_string(), ConnectionStatus::Connecting);
                             if let Some(cli_tx) = &self.cli_tx {
-                                cli_tx.send(Commands::StartStream(repo_name.to_string())).unwrap();
+                                cli_tx.send(Commands::StartStream(repo_name.to_string(), repo_config.watch_directory.to_string())).unwrap();
                             }
                         }
                     }
@@ -324,44 +328,6 @@ impl ConfigApp {
                 ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().auto_connect, RichText::new("Enable auto-connect").italics()));
 
                 if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Connected) {
-                    if ui.button("Backup Now").clicked() {
-                        if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) == true{
-                            self.app_tx.send(Commands::Log("Photo Client is not running. Start the client before backing up.".to_string())).unwrap();
-                            return;
-                        }
-
-                        let fmt = "%Y-%m-%d %H:%M:%S%.f %:z";
-                        let f = std::fs::File::open("./last_backup.txt");
-                        let last_backup_time = match f {
-                            Ok(mut file) => {
-                                let mut contents = String::new();
-                                if let Some(_) = file.read_to_string(&mut contents).ok() {
-                                    match chrono::DateTime::parse_from_str(contents.trim(), fmt) {
-                                        Ok(dt) => Some(dt.with_timezone(&chrono::Local)),
-                                        Err(_) => {
-                                            self.app_tx.send(Commands::Log("Failed to parse last backup time. Using (NOW)".to_string())).unwrap();
-                                            None
-                                        }
-                                    }
-                                } else {
-                                    self.app_tx.send(Commands::Log("Failed to read last backup time. Using (NOW)".to_string())).unwrap();
-                                    None
-                                }
-                            }
-                            Err(_) => {
-                                self.app_tx.send(Commands::Log("No previous backup time found".to_string())).unwrap();
-                                chrono::Local::now().checked_sub_signed(chrono::Duration::seconds(1))
-                            }
-                        };
-
-                        self.app_tx.send(Commands::Log(format!("backing up all files modified since: {}", 
-                            match last_backup_time {
-                                Some(t) => t.format("%Y-%m-%d %H:%M:%S").to_string(),
-                                None => "(NOW)".to_string()
-                            }
-                        ))).unwrap();
-                    }
-
                     if ui.button("Disconnect").clicked() {
 
                         self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
@@ -373,12 +339,11 @@ impl ConfigApp {
                             self.ui.selected_repo = None;
                         }
                     }
-                    
-                    if ui.button("Remove Repository").clicked() {
-                        self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
-                        if let Some(cli_tx) = &self.cli_tx {
-                            cli_tx.send(Commands::RemoveRepository(repo_name.to_string())).unwrap();
-                        }
+                }
+                if ui.button("Remove Repository").clicked() {
+                    self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
+                    if let Some(cli_tx) = &self.cli_tx {
+                        cli_tx.send(Commands::RemoveRepository(repo_name.to_string())).unwrap();
                     }
                 }
             } else {
@@ -397,6 +362,10 @@ impl ConfigApp {
                 ui.separator();
                 self.file_explorer(ui);
             });
+            if ui.button("Save Configuration").clicked() {
+                self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
+                self.config.save_to_file(self.config_path.to_str().unwrap());
+            }
         }
     }
 
@@ -511,7 +480,7 @@ impl ConfigApp {
     }
 }
 
-impl eframe::App for ConfigApp {
+impl eframe::App for AppConfig {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.connect_menu(ui);       
