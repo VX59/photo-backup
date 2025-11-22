@@ -1,4 +1,3 @@
-use core::prelude;
 use std::path::Path;
 use shared::FileHeader;
 use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
@@ -8,11 +7,9 @@ use std::sync::mpsc::channel;
 use std::time::Duration;
 use bincode::config;
 use image::ImageReader;
-use chrono;
 use bincode::encode_into_slice;
 use std::net::TcpStream;
 use std::path::PathBuf;
-use crate::app::RepoConfig;
 use crate::app::{Commands};
 use shared::{read_response, Response};
 use std::sync::mpsc;
@@ -20,22 +17,24 @@ use crate::client::{ Log};
 
 pub struct FileStreamClient {
     stream:TcpStream,
-    repo_config:RepoConfig,
+    watch_directory:String,
     pub app_tx:mpsc::Sender<Commands>,
     stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>
 }
 
 impl FileStreamClient {
-    pub fn new(stream:TcpStream, repo_config:RepoConfig, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(stream:TcpStream, watch_directory:String, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
         FileStreamClient { 
             stream,
-            repo_config,
+            watch_directory,
             app_tx,
             stop_flag
         }
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
+        println!("Starting streaming client");
+        println!("watch directory {}", self.watch_directory);
         let (wtx, wrx) = channel();
         let mut watcher = match RecommendedWatcher::new(move |res| 
             match wtx.send(res) {
@@ -51,9 +50,8 @@ impl FileStreamClient {
             }
         };
 
-        let path = self.repo_config.watch_directory.clone();
-        if let Err(e) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
-            return Err(anyhow::anyhow!("Failed to watch directory: {} {}",path, e));
+        if let Err(e) = watcher.watch(Path::new(&self.watch_directory), RecursiveMode::Recursive) {
+            return Err(anyhow::anyhow!("Failed to watch directory: {} {}",self.watch_directory, e));
         }
 
 
@@ -68,6 +66,7 @@ impl FileStreamClient {
                         }
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
+                        println!("new create event");
                         for path in new_event.paths {
                             if let Err(e) = self.upload_file(path) {
                                 eprintln!("Failed to send image: {}", e);
@@ -88,7 +87,7 @@ impl FileStreamClient {
         }
 
         self.stream.shutdown(std::net::Shutdown::Both).ok();
-        self.app_tx.send(Commands::Log("Repo client stopped.".to_string()))?;
+        self.app_tx.send(Commands::Log("Streaming client stopped.".to_string()))?;
 
         Ok(())
     }
@@ -142,7 +141,7 @@ impl FileStreamClient {
 
         }
 
-        let repo_root = Path::new(&self.repo_config.watch_directory);
+        let repo_root = Path::new(&self.watch_directory);
         let relative_path = match local_path.strip_prefix(repo_root) {
             Ok(path) => {
                 let parent_path = match path.parent().unwrap_or_else(|| Path::new("")).to_str() {
@@ -175,16 +174,10 @@ impl FileStreamClient {
         self.stream.write_all(&header_bytes)?;
         self.stream.write_all(&image_bytes)?;
 
-        println!("Sent file: {} ({} bytes)", file_header.file_name, file_header.file_size);
+        println!("Sent file: {} ({} bytes)",file_header.file_name, file_header.file_size);
 
         let response = read_response(&mut self.stream)?;
         self.log_response(&response)?;
-
-        // log the timestamp of the most recent backup
-        let timestamp = chrono::DateTime::<chrono::Local>::from(file_datetime);
-
-        let mut f = std::fs::File::create("./last_backup.txt")?;
-        f.write_all(timestamp.to_string().as_bytes())?;
 
         Ok(())
     }

@@ -39,15 +39,17 @@ struct FileStreamServer {
     storage_directory: String,
     stream:TcpStream,
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    tree:Tree,
 }
 
 impl FileStreamServer {
     pub fn new(repo_name:String,storage_directory: String, stream:TcpStream, stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self{
         FileStreamServer {
-            repo_name,
+            repo_name:repo_name.clone(),
             storage_directory,
             stream,
             stop_flag,
+            tree: Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()),
         }
     }
 
@@ -98,10 +100,9 @@ impl FileStreamServer {
         let image_loc = file_dest.join(file_header.relative_path);
         let image_path = image_loc.join(file_header.file_name);
 
-        let mut tree = Tree::load_from_file(&("trees".to_string() + "/" + &self.repo_name + ".tree").to_string());
-        tree.add_history( format!("+{}", image_path.to_str().unwrap().to_string()));
-        tree.apply_history(tree.version + 1);
-        tree.save_to_file(&tree.path);
+        self.tree.add_history( format!("+{}", image_path.to_str().unwrap().to_string()));
+        self.tree.apply_history(self.tree.version + 1);
+        self.tree.save_to_file(&self.tree.path);
 
         println!("Receiving file: {} ({} bytes)", image_path.to_str().unwrap().to_string(), file_header.file_size);
 

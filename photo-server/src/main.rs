@@ -26,7 +26,6 @@ fn main() {
     let mut photo_server = PhotoServer::new(
         name.clone(),
         format!("{}:{}", name, "8080"),
-        "./storage-server".to_string(),
     );
 
     if let Err(e) = photo_server.start() {

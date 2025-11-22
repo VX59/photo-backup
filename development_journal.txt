@@ -69,3 +69,13 @@ Also there is a new intermittent bug, where I connected to a repo uploaded a fil
 then for some reason It uploaded 2 times to the same repo, not sure why I cant reproduce it consistently so maybe it was an issue,
 I need to go through all the resources and make sure things are synchronized, if its a shared resource such as the tree files then I need to add locks to them. 
 The reason you have to click the refresh button 2 times is probably because the client side tree is not synced properly between the app and the client.
+
+11/22/25
+fixed a bug where the client started watching but was never passed a directory causing the streaming client to never
+upload if the repo was created in the same stream. The initialize file streaming client function was passed a repo config which
+got loaded from the disk instead of just passing the watch directory as a argument. This solution seemed to fix the issue permanantly.
+added save configuration button to the ui. Fixed the Global storage setting issue in the ui. Minor fix in loading the tree on the server side
+
+Still some issue applying modifications to the server tree, 1 unreproducable bug, when running multiple clients or maybe just one, disconnecting/reconnecting didnt
+fully close one of the streaming services so 1 extra streaming service was running, some issue with thread management obviously but
+not sure what the cause it yet.

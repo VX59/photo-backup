@@ -83,7 +83,6 @@ impl PhotoServerRequestHandler {
                 RequestTypes::RemoveRepository => self.remove_repository(request)?,
                 RequestTypes::GetRepoTree => self.get_repo_tree(request)?,
                 RequestTypes::SetStoragePath => self.set_storage_path(request)?,
-                _ => {},
             }
         }
     }
@@ -102,7 +101,7 @@ impl PhotoServerRequestHandler {
                 response = Response {
                     status_code: ResponseCodes::NotFound,
                     status_message: "Invalid path".to_string(),
-                    body: "Closing connection due to invalid repository path.".as_bytes().to_vec(),
+                    body: "Invalid Global Storage Path".as_bytes().to_vec(),
                 };
 
             } else {

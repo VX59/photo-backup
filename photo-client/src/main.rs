@@ -6,8 +6,8 @@ mod app;
 mod client;
 mod filestreamclient;
 
-use app::ConfigApp;
-use app::Config;
+use app::AppConfig;
+use app::ClientConfig;
 use app::UiState;
 
 use crate::app::Commands;
@@ -22,8 +22,8 @@ fn main() -> std::io::Result<()> {
         file.set_len(0)?;
     }
 
-    let app = ConfigApp {
-        config: Config::load_from_file(config_path.to_str().unwrap()),
+    let app = AppConfig {
+        config: ClientConfig::load_from_file(config_path.to_str().unwrap()),
         config_path,
         log_file: std::fs::File::create("output.log")?,
         client_handle: None,

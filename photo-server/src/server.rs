@@ -1,23 +1,18 @@
-use std::{
-net::{TcpListener}
-};
-use std::path::Path;
+use std::net::TcpListener;
 
-use shared::{read_request, send_response, Response, ResponseCodes};
+use shared::{send_response, Response, ResponseCodes};
 use crate::request_handler::PhotoServerRequestHandler;
 
 pub struct PhotoServer {
     pub name: String,
     pub address: String,
-    pub storage_directory: String,
 }
 
 impl PhotoServer {
-    pub fn new(name: String, address: String, storage_directory: String) -> Self {
+    pub fn new(name: String, address: String,) -> Self {
         PhotoServer {
             name,
             address,
-            storage_directory,
         }
     }
 
