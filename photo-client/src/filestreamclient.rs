@@ -33,8 +33,6 @@ impl FileStreamClient {
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
-        println!("Starting streaming client");
-        println!("watch directory {}", self.watch_directory);
         let (wtx, wrx) = channel();
         let mut watcher = match RecommendedWatcher::new(move |res| 
             match wtx.send(res) {
@@ -66,7 +64,6 @@ impl FileStreamClient {
                         }
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
-                        println!("new create event");
                         for path in new_event.paths {
                             if let Err(e) = self.upload_file(path) {
                                 eprintln!("Failed to send image: {}", e);
