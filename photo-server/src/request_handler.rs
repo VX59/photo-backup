@@ -11,8 +11,9 @@ use shared::{read_request, send_response, Request, RequestTypes, Response, Respo
 
 #[derive(Serialize,Deserialize, Default, Debug, Clone)]
 pub struct Config {
+    pub storage_directory:String,
     pub repo_list: Vec<String>,
-    pub path: String,
+    pub config_path: String,
 }
 
 impl Config {
@@ -39,7 +40,7 @@ impl Config {
     pub fn remove_repo(&mut self, repo:String) {
         if self.repo_list.contains(&repo) {
             self.repo_list.retain(|r| r != &repo);
-            self.save_to_file(&self.path);
+            self.save_to_file(&self.config_path);
         } else {
             eprintln!("Repo does not exist in config.");
         }
@@ -48,7 +49,7 @@ impl Config {
     pub fn add_repo(&mut self, repo:String) {
         if !self.repo_list.contains(&repo) {
             self.repo_list.push(repo);
-            self.save_to_file(&self.path);
+            self.save_to_file(&self.config_path);
         } else {
             eprintln!("Repo already exists in config.");
         }
@@ -59,16 +60,14 @@ pub struct PhotoServerRequestHandler {
     pub stream:TcpStream,
     pub config:Config,
     pub repo_threads: HashMap<String, (std::thread::JoinHandle<()>, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
-    pub storage_directory:String,
 }
 
 impl PhotoServerRequestHandler {
-    pub fn new(config_path:String, stream:TcpStream, storage_directory: String) -> Self {
+    pub fn new(config_path:String, stream:TcpStream) -> Self {
         PhotoServerRequestHandler {
             stream,
             config: Config::load_from_file(&config_path),
             repo_threads: HashMap::new(),
-            storage_directory,
         }
     }
 
@@ -83,9 +82,43 @@ impl PhotoServerRequestHandler {
                 RequestTypes::DisconnectStream => self.disconnect_stream(request)?,
                 RequestTypes::RemoveRepository => self.remove_repository(request)?,
                 RequestTypes::GetRepoTree => self.get_repo_tree(request)?,
+                RequestTypes::SetStoragePath => self.set_storage_path(request)?,
                 _ => {},
             }
         }
+    }
+
+    fn set_storage_path(&mut self, request:Request) -> anyhow::Result<()> {
+            let storage_directory = String::from_utf8_lossy(&request.body)
+                .trim() 
+                .replace(|c: char| c.is_control(), "_")
+                .to_string();
+            
+            let storage_directory_path = std::path::Path::new(&storage_directory);
+
+            let response:Response;
+            if storage_directory_path.exists() == false {
+                
+                response = Response {
+                    status_code: ResponseCodes::NotFound,
+                    status_message: "Invalid path".to_string(),
+                    body: "Closing connection due to invalid repository path.".as_bytes().to_vec(),
+                };
+
+            } else {
+                self.config.storage_directory = storage_directory;
+                self.config.save_to_file(&self.config.config_path);
+                
+                response = Response {
+                    status_code:ResponseCodes::OK,
+                    status_message:"".to_string(),
+                    body: "Successfully set the storage directory path".as_bytes().to_vec()
+                }
+            }
+            
+            send_response(response, &mut self.stream)?;
+
+            Ok(())
     }
 
     fn remove_repository(&mut self, request:Request) -> anyhow::Result<()> {
@@ -97,7 +130,7 @@ impl PhotoServerRequestHandler {
         self.config.remove_repo(repo_name.clone());
         let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
         std::fs::remove_file(tree.path)?;
-        let repo_path = std::path::Path::new(&self.storage_directory).join(repo_name.clone());
+        let repo_path = std::path::Path::new(&self.config.storage_directory).join(repo_name.clone());
         std::fs::remove_dir_all(repo_path)?;
 
         let response = Response {
@@ -138,7 +171,7 @@ impl PhotoServerRequestHandler {
             .trim()         // removes leading/trailing whitespace
             .replace(|c: char| c.is_control(), "_") // replace control chars with _
             .to_string(); 
-        let repo_path = Path::new(&self.storage_directory).join(&repo_name);
+        let repo_path = Path::new(&self.config.storage_directory).join(&repo_name);
         
         let response:Response;
 
@@ -204,7 +237,7 @@ impl PhotoServerRequestHandler {
         send_response(response, &mut self.stream)?;
 
         let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        match initiate_file_streaming_server(repo_name.clone(), self.storage_directory.clone(), listener,stop_flag.clone()) {
+        match initiate_file_streaming_server(repo_name.clone(), self.config.storage_directory.clone(), listener,stop_flag.clone()) {
             
             Ok(handle) => { 
                 self.repo_threads.insert(repo_name.clone(),(handle, stop_flag));

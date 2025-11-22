@@ -24,7 +24,6 @@ pub enum ResponseCodes {
     NotConnected,
     InternalError,
     Duplicate,
-    Maintanence,
 }
 
 impl std::fmt::Display for ResponseCodes {
@@ -36,7 +35,6 @@ impl std::fmt::Display for ResponseCodes {
             ResponseCodes::NotConnected => write!(f,"Not Connected"),
             ResponseCodes::InternalError => write!(f, "Internal Server Error"),
             ResponseCodes::Duplicate => write!(f, "Duplicate"),
-            ResponseCodes::Maintanence => write!(f, "Maintanence"),
         }
     }
 }

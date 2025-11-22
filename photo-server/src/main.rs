@@ -19,8 +19,8 @@ fn main() {
     }
 
     let mut config = Config::load_from_file("photo-server-config.json");
-    config.path = "photo-server-config.json".to_string();
-    config.save_to_file(&config.path);
+    config.config_path = "photo-server-config.json".to_string();
+    config.save_to_file(&config.config_path);
 
     let name = get().unwrap_or_default().to_string_lossy().to_string(); // gets the servers hostname dynamically
     let mut photo_server = PhotoServer::new(

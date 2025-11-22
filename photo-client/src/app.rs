@@ -1,6 +1,8 @@
+use eframe::Storage;
 use egui::ahash::HashMap;
 use serde::Deserialize;
 use serde::Serialize;
+use std::process::Command;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -24,6 +26,7 @@ pub struct ConfigApp {
 pub enum Commands {
     Log(String),
     CreateRepo(String),
+    SetStoragePath(String),
     PostRepos(Vec<String>),
     UpdateRepoStatus((String, ConnectionStatus)),
     StartStream(String),
@@ -130,9 +133,6 @@ impl ConfigApp {
                 if self.config.server_address.is_empty() | self.config.server_storage_directory.is_empty() {
                     self.app_tx.send(Commands::Log("server address or storage directory not set".to_string())).unwrap();
                 } else {
-                    self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                    self.config.save_to_file(self.config_path.to_str().unwrap());
-
                     if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
                         self.ui.connection_status = ConnectionStatus::Connecting;
                         self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
@@ -180,8 +180,6 @@ impl ConfigApp {
     fn connect_config(&mut self, ui:&mut egui::Ui) {
         ui.label("Server Address:");
         ui.text_edit_singleline(&mut self.config.server_address);
-        ui.label("Global storage path on Server:");
-        ui.text_edit_singleline(&mut self.config.server_storage_directory);
     }
 
     fn connect_menu(&mut self, ui:&mut egui::Ui) {
@@ -211,12 +209,23 @@ impl ConfigApp {
                     self.connect_to_server(ui);
                 });
             });
-
         });
         self.connect_config(ui);
+
+        if self.ui.connection_status == ConnectionStatus::Connected {
+            ui.label("Global storage path on Server:");
+            ui.text_edit_singleline(&mut self.config.server_storage_directory);
+            if ui.button("Save Global-Storage Path").clicked() {
+                if let Some(cli_tx) = &self.cli_tx {
+                    let storage_path = self.config.server_storage_directory.clone();
+                    cli_tx.send(Commands::SetStoragePath(storage_path)).unwrap()
+                }
+            }
+        }
     }
 
     fn repository_list(&mut self, ui: &mut egui::Ui) {
+ 
         ui.vertical(|ui| {
             ui.heading("Repositories");
 

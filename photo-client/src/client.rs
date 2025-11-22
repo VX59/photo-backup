@@ -51,20 +51,9 @@ impl ImageClient {
                     
                     self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Connected))?;
                 }
-                
-                // Send storage directory path to server
-                if let Some(stream) = &mut self.command_stream {
 
-                    let request = Request {
-                        request_type: RequestTypes::SetStoragePath,
-                        body: self.config.server_storage_directory.as_bytes().to_vec(),
-                    };
-
-                    send_request(request, stream)?;
-                    let response = read_response(stream)?;
-                    self.log_response(&response)?;
-                
-                    self.get_repositories()?;
+                if !self.config.server_storage_directory.is_empty() {
+                    self.get_repositories()?
                 }
 
                 // listen to the app for commands
@@ -143,6 +132,27 @@ impl ImageClient {
                                     }
                                 }
                            }
+                        }
+
+                        Commands::SetStoragePath(storage_direcotry) => {
+                            // Send storage directory path to server
+                            if let Some(stream) = &mut self.command_stream {
+
+                                let request = Request {
+                                    request_type: RequestTypes::SetStoragePath,
+                                    body: storage_direcotry.as_bytes().to_vec(),
+                                };
+
+                                send_request(request, stream)?;
+                                let response = read_response(stream)?;
+                                self.log_response(&response)?;
+
+                                if response.status_code == ResponseCodes::OK {
+                                    self.config.save_to_file("./photo-client-config.json");
+
+                                }
+                                self.get_repositories()?;
+                            }
                         }
 
                         Commands::StartStream(repo) => {
