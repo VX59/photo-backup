@@ -12,7 +12,7 @@ pub enum Commands {
     DisconnectStream(String),
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),
-    GetRepoTree(String,i32),
+    GetRepoTree(String),
     PostRepoTree(Tree, String),
     GetSubDir(String),
 }

@@ -1,6 +1,5 @@
 use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream,
-        path::PathBuf};
-use serde_json::json;
+        path::PathBuf, sync::Arc, sync::atomic};
 use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree,
             read_response, Request, Log};
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
@@ -11,15 +10,15 @@ mod repository_managment;
 pub struct Client {
     pub app_tx: mpsc::Sender<Commands>,
     rx: mpsc::Receiver<Commands>,
-    stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stop_flag: Arc<atomic::AtomicBool>,
     config: ClientConfig,
     command_stream: Option<TcpStream>,
-    repo_threads: HashMap<String, (std::thread::JoinHandle<()>,std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    repo_threads: HashMap<String, (std::thread::JoinHandle<()>,Arc<atomic::AtomicBool>)>,
     trees: HashMap<String,Tree>
 }
 
 impl Client {
-    pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag:Arc<atomic::AtomicBool>) -> Self {
         let config_path = PathBuf::from("photo-client-config.json");
 
         Client {
@@ -79,106 +78,19 @@ impl Client {
         Ok(())
     }
     fn app_request_handler(&mut self) -> anyhow::Result<()> {
-        while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        while !self.stop_flag.load(atomic::Ordering::Relaxed) {
             match self.rx.try_recv() {
                 Ok(new_command) => {
                     match new_command {
-                        Commands::CreateRepo(msg) => {
-                            self.create_repository(msg.to_string())?;
-                        }
-
-                        Commands::GetRepoTree(repo_name, version) => {
-                            let body = json!({
-                                "repo_name": repo_name,
-                                "version": version,
-                            });
-                            if let Some(stream) = self.command_stream.as_mut() {
-                                let request = Request {
-                                    request_type: RequestTypes::GetRepoTree,
-                                    body: serde_json::to_vec(&body)?,
-                                };
-
-                                send_request(request, stream)?;
-                                let response = read_response(stream)?;
-                                self.log_response(&response)?;
-
-                                if response.status_code == ResponseCodes::OK {
-                                    let mut tree: Tree;
-
-                                    if !response.body.is_empty() {
-                                        let Some(existing_tree) = self.trees.get(&repo_name) else {
-                                            self.app_tx.send(Commands::Log(
-                                                format!("tree {} not found", repo_name)
-                                            ))?;
-                                            continue;
-                                        };
-
-                                        tree = existing_tree.clone();
-
-                                        let tree_updates: HashMap<i32, String> =
-                                            serde_json::from_slice(&response.body)?;
-
-                                        let version = tree_updates.keys().cloned().max().unwrap_or(0);
-
-                                        self.app_tx.send(Commands::Log(
-                                            format!(
-                                                "Applying history from index {} to {}",
-                                                version - tree.version,
-                                                version
-                                            )
-                                        ))?;
-
-                                        for (_, history_entry) in tree_updates {
-                                            tree.add_history(history_entry);
-                                        }
-
-                                        tree.apply_history(version);
-                                        tree.save_to_file(&tree.path);
-
-                                    } else {
-                                        let tree_path = format!("trees/{repo_name}.tree");
-                                        tree = Tree::load_from_file(&tree_path);
-                                    }
-
-                                    self.app_tx.send(Commands::PostRepoTree(tree.clone(), repo_name))?;
-                                }
-
-                           }
-                        }
-
-                        Commands::SetStoragePath(storage_direcotry) => {
-                            // Send storage directory path to server
-                            if let Some(stream) = &mut self.command_stream {
-
-                                let request = Request {
-                                    request_type: RequestTypes::SetStoragePath,
-                                    body: storage_direcotry.as_bytes().to_vec(),
-                                };
-
-                                send_request(request, stream)?;
-                                let response = read_response(stream)?;
-                                self.log_response(&response)?;
-
-                                if response.status_code == ResponseCodes::OK {
-                                    self.config.save_to_file("./photo-client-config.json");
-
-                                }
-                                self.get_repositories()?;
-                            }
-                        }
-
+                        Commands::CreateRepo(msg) => self.create_repository(msg.to_string())?,
+                        Commands::GetRepoTree(repo_name) => self.get_repo_tree(repo_name)?,
+                        Commands::SetStoragePath(storage_directory) => self.set_storage_path(storage_directory)?,
                         Commands::StartStream(repo_name, watch_directory) => {
-
-                            // request a file streaming channel - the server will open another port
-                            let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                            let file_streaming_client_handle = self.initiate_file_streaming_client(repo_name.to_string(), watch_directory, stop_flag.clone())?;
-
+                            let stop_flag = std::sync::Arc::new(atomic::AtomicBool::new(false));
+                            let file_streaming_client_handle = self.start_stream(repo_name.to_string(), watch_directory, stop_flag.clone())?;
                             self.repo_threads.insert(repo_name, (file_streaming_client_handle, stop_flag));
                         }
-                        Commands::DisconnectStream(repo) => {
-                            self.disconnect_repository(&repo)?;                               
-                        }
-
+                        Commands::DisconnectStream(repo) => self.disconnect_repository(&repo)?,
                         Commands::RemoveRepository(repo) => {
                             self.disconnect_repository(&repo)?;
                             self.remove_repository(&repo)?;
@@ -195,7 +107,28 @@ impl Client {
         Ok(())
     }
 
-    pub fn initiate_file_streaming_client(&mut self, repo:String, watch_directory:String, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>> {
+    fn set_storage_path(&mut self, storage_directory:String) ->anyhow::Result<()> {
+        if let Some(stream) = &mut self.command_stream {
+
+            let request = Request {
+                request_type: RequestTypes::SetStoragePath,
+                body: storage_directory.as_bytes().to_vec(),
+            };
+
+            send_request(request, stream)?;
+            let response = read_response(stream)?;
+            self.log_response(&response)?;
+
+            if response.status_code == ResponseCodes::OK {
+                self.config.save_to_file("./photo-client-config.json");
+
+            }
+            self.get_repositories()?;
+        }
+        Ok(())
+    }
+    
+    fn start_stream(&mut self, repo:String, watch_directory:String, stop_flag: Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>> {
         if let Some(stream) = self.command_stream.as_mut() {
             let request = Request {
                 request_type: RequestTypes::StartStream,

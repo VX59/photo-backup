@@ -1,12 +1,11 @@
 use std::{
     io::{prelude::*}, net::{TcpListener, TcpStream}, thread::{JoinHandle},
-    path::Path
+    path::Path, sync::{Arc, atomic}
 };
-use anyhow::Result;
 use::bincode::{config};
 use shared::{send_response, Response, Tree, FileHeader};
 
-pub fn initiate_file_streaming_server(repo_name:String, storage_directory: String, listener:TcpListener, stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<JoinHandle<()>>{   
+pub fn initiate_file_streaming_server(repo_name:String, storage_directory: String, listener:TcpListener, stop_flag:Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>>{   
     match listener.accept() {
         Ok((mut file_stream, socket_addr)) => {
             
@@ -28,7 +27,7 @@ pub fn initiate_file_streaming_server(repo_name:String, storage_directory: Strin
                 file_stream_server.run(repo_path.as_path());
             }));
         },
-        Err(e) => return Err(e),
+        Err(e) => return Err(anyhow::anyhow!(e)),
     }
 }
 
@@ -74,7 +73,7 @@ impl FileStreamServer {
         }
     }
 
-    fn upload_file(&mut self, file_dest: &Path) -> Result<String, anyhow::Error> {
+    fn upload_file(&mut self, file_dest: &Path) -> anyhow::Result<String, anyhow::Error> {
         let mut header_length_buffer = [0u8; 4];
         // Read the request line
 

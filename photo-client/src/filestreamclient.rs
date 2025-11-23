@@ -1,4 +1,4 @@
-use std::{path::{Path,PathBuf}, io::{prelude::*, Cursor}, sync::mpsc,
+use std::{path::{Path,PathBuf}, io::{prelude::*, Cursor}, sync::{mpsc,Arc,atomic},
                 time::Duration, net::TcpStream,};
 use bincode::{config, encode_into_slice};
 use image::ImageReader;
@@ -10,16 +10,16 @@ pub struct FileStreamClient {
     stream:TcpStream,
     watch_directory:String,
     pub app_tx:mpsc::Sender<Commands>,
-    stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>
+    stop_flag:Arc<atomic::AtomicBool>,
 }
 
 impl FileStreamClient {
-    pub fn new(stream:TcpStream, watch_directory:String, app_tx:mpsc::Sender<Commands>, stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+    pub fn new(stream:TcpStream, watch_directory:String, app_tx:mpsc::Sender<Commands>, stop_flag: Arc<atomic::AtomicBool>) -> Self {
         FileStreamClient { 
             stream,
             watch_directory,
             app_tx,
-            stop_flag
+            stop_flag,
         }
     }
 
@@ -44,7 +44,7 @@ impl FileStreamClient {
         }
 
 
-        while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+        while !self.stop_flag.load(atomic::Ordering::Relaxed) {
             match wrx.try_recv() {
                 Ok(event) => {
                     let new_event = match event {
@@ -68,7 +68,6 @@ impl FileStreamClient {
                     continue;
                 },
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    // Channel disconnected
                     break;
                 }
             }
@@ -87,7 +86,7 @@ impl FileStreamClient {
 
         let mut last_size = 0;
         loop {
-            if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.stop_flag.load(atomic::Ordering::Relaxed) {
                 return Ok(())
             }
             let metadata = std::fs::metadata(&local_path)?;
