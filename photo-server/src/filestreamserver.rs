@@ -1,12 +1,10 @@
 use std::{
-    io::{prelude::*}, net::{TcpListener, TcpStream}, thread::{JoinHandle}
+    io::{prelude::*}, net::{TcpListener, TcpStream}, thread::{JoinHandle},
+    path::Path
 };
-use shared::{Tree};
 use anyhow::Result;
-use std::path::Path;
 use::bincode::{config};
-use::shared::FileHeader;
-use shared::{send_response, Response};
+use shared::{send_response, Response, Tree, FileHeader};
 
 pub fn initiate_file_streaming_server(repo_name:String, storage_directory: String, listener:TcpListener, stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>) -> std::io::Result<JoinHandle<()>>{   
     match listener.accept() {

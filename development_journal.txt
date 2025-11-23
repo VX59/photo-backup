@@ -79,3 +79,8 @@ added save configuration button to the ui. Fixed the Global storage setting issu
 Still some issue applying modifications to the server tree, 1 unreproducable bug, when running multiple clients or maybe just one, disconnecting/reconnecting didnt
 fully close one of the streaming services so 1 extra streaming service was running, some issue with thread management obviously but
 not sure what the cause it yet.
+
+11/23/2025
+fixed all the issues with the trees failing to apply updates properly fixed issue where you have to click refresh twice, instead of saving to the file on the disk
+which leads to the state being outdated, we update the tree in the client, then send the tree in memory to the app so that the state updates with the most
+recent version and does not rely on the disk for state management.

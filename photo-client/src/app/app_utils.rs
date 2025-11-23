@@ -1,6 +1,5 @@
-use egui::ahash::HashMap;
-use serde::Deserialize;
-use serde::Serialize;
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use shared::Tree;
 
 pub enum Commands {

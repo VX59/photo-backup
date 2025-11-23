@@ -2,9 +2,7 @@ pub mod connect_menu;
 pub mod repository_menu;
 pub mod app_utils;
 
-use std::sync::mpsc;
-use std::path::PathBuf;
-use std::io::{Write};
+use std::{sync::mpsc, path::PathBuf, io::Write};
 pub use app_utils::{ConnectionStatus, RepoConfig, Commands, ClientConfig, UiState, FileSystemEntry};
 
 pub struct App {
