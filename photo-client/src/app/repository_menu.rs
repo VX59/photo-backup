@@ -1,5 +1,4 @@
 use super::App;
-use shared::Tree;
 use egui::{Color32, RichText, Frame, Checkbox};
 use super::{Commands, ConnectionStatus};
 
@@ -18,8 +17,7 @@ impl App {
                     self.ui.file_explorer_path.clear();
                     self.ui.file_explorer_path.push(repo_name.clone());
                     if let Some(cli_tx) = &self.cli_tx {
-                        let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-                        cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
+                        cli_tx.send(Commands::GetRepoTree(repo_name.clone())).unwrap();
                     }
                 }
             }

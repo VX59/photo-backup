@@ -1,8 +1,9 @@
 use super::Client;
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{Arc, atomic}};
 use shared::{send_request,RequestTypes,ResponseCodes,Tree,
             read_response, Request, Log};
 use crate::app::{Commands, ConnectionStatus, RepoConfig};
+use serde_json::json;
 
 impl Client {
     pub fn create_repository(&mut self, repo_name:String) -> anyhow::Result<()> {
@@ -57,11 +58,8 @@ impl Client {
 
                 for (repo_name, repo_config) in self.config.repo_config.clone() {
                     if repo_config.auto_connect & self.config.repo_config.contains_key(&repo_name){
-                        
-                        // request a file streaming channel - the server will open another port
-                        let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let file_streaming_client_handle = self.initiate_file_streaming_client(repo_name.to_string(), repo_config.watch_directory.to_string(), stop_flag.clone())?;
-
+                        let stop_flag = Arc::new(atomic::AtomicBool::new(false));
+                        let file_streaming_client_handle = self.start_stream(repo_name.to_string(), repo_config.watch_directory.to_string(), stop_flag.clone())?;
                         self.repo_threads.insert(repo_name.clone(), (file_streaming_client_handle, stop_flag));
                     }
                     let tree_path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
@@ -81,7 +79,7 @@ impl Client {
     pub fn disconnect_repository(&mut self, repo:&String) -> anyhow::Result<()>{
         match self.repo_threads.remove(repo) {
             Some((handle,stop_flag)) => {
-                stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                stop_flag.store(true, atomic::Ordering::Relaxed);
                 self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string()))?;
 
                 if let Err(_e) = handle.join() {
@@ -133,6 +131,61 @@ impl Client {
                 self.config.save_to_file("./photo-client-config.json");
                 self.app_tx.send(Commands::RemoveRepository(repo_name.to_string()))?;
             }            
+        }
+        Ok(())
+    }
+
+    pub fn get_repo_tree(&mut self, repo_name:String) ->anyhow::Result<()>{
+        let mut tree: Tree;
+        let Some(existing_tree) = self.trees.get(&repo_name) else {
+            self.app_tx.send(Commands::Log(
+                format!("tree {} not found", repo_name)
+            ))?;
+            return Err(anyhow::anyhow!(format!("tree {} not found", repo_name)));
+        };
+
+        tree = existing_tree.clone();
+        
+        let body = json!({
+            "repo_name": repo_name,
+            "version": tree.version,
+        });
+        if let Some(stream) = self.command_stream.as_mut() {
+            let request = Request {
+                request_type: RequestTypes::GetRepoTree,
+                body: serde_json::to_vec(&body)?,
+            };
+
+            send_request(request, stream)?;
+            let response = read_response(stream)?;
+            self.log_response(&response)?;
+
+            if response.status_code == ResponseCodes::OK {
+                if !response.body.is_empty() {
+                    let tree_updates: HashMap<i32, String> =
+                        serde_json::from_slice(&response.body)?;
+
+                    let new_version = tree_updates.keys().cloned().max().unwrap_or(0);
+
+                    self.app_tx.send(Commands::Log(
+                        format!(
+                            "Applying history from index {} to {}",
+                            new_version - tree.version,
+                            new_version
+                        )
+                    ))?;
+
+                    for (_, history_entry) in tree_updates {
+                        tree.add_history(history_entry);
+                    }
+
+                    tree.apply_history(new_version);
+                    tree.save_to_file(&tree.path);
+
+                }
+
+                self.app_tx.send(Commands::PostRepoTree(tree.clone(), repo_name))?;
+            }
         }
         Ok(())
     }
