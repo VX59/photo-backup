@@ -199,3 +199,6 @@ impl Config {
         }
     }
 }
+pub trait Log {
+    fn log_response(&self, response:&Response)  -> anyhow::Result<()>;
+}

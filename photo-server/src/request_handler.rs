@@ -1,11 +1,9 @@
 use std::{
-collections::HashMap, net::{TcpListener, TcpStream}
+collections::HashMap, net::{TcpListener, TcpStream}, path::Path,
 };
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use rand::{Rng};
 use serde_json;
-use std::path::Path;
 use crate::filestreamserver::{initiate_file_streaming_server};
 use shared::{read_request, send_response, Request, RequestTypes, Response, ResponseCodes, Tree};
 

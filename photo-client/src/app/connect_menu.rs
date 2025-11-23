@@ -1,9 +1,7 @@
-use super::App;
 use egui::{Color32, RichText, Frame};
-use super::Commands;
-use super::ConnectionStatus;
+use super::{Commands, ConnectionStatus, App};
 use std::sync::mpsc;
-use crate::client::ImageClient;
+use crate::client::Client;
 
 impl App {
     fn connect_to_server (&mut self, ui:&mut egui::Ui) {
@@ -27,7 +25,7 @@ impl App {
                         self.cli_tx = Some(cmd_tx.clone());
 
                         self.client_handle = Some(std::thread::spawn(move || {
-                            let mut client = ImageClient::new(log_tx_clone, cmd_rx, stop_flag_clone);
+                            let mut client = Client::new(log_tx_clone, cmd_rx, stop_flag_clone);
                             if let Err(e) = client.connect() {
                                 client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
                             }

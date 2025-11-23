@@ -1,19 +1,10 @@
-use std::path::Path;
-use shared::FileHeader;
-use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
-use std::io::prelude::*;
-use std::io::Cursor;
-use std::sync::mpsc::channel;
-use std::time::Duration;
-use bincode::config;
+use std::{path::{Path,PathBuf}, io::{prelude::*, Cursor}, sync::mpsc,
+                time::Duration, net::TcpStream,};
+use bincode::{config, encode_into_slice};
 use image::ImageReader;
-use bincode::encode_into_slice;
-use std::net::TcpStream;
-use std::path::PathBuf;
+use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
+use shared::{read_response, Response, Log, FileHeader};
 use crate::app::{Commands};
-use shared::{read_response, Response};
-use std::sync::mpsc;
-use crate::client::{ Log};
 
 pub struct FileStreamClient {
     stream:TcpStream,
@@ -33,7 +24,7 @@ impl FileStreamClient {
     }
 
     pub fn run(&mut self) -> anyhow::Result<()> {
-        let (wtx, wrx) = channel();
+        let (wtx, wrx) = mpsc::channel();
         let mut watcher = match RecommendedWatcher::new(move |res| 
             match wtx.send(res) {
                 Ok(res) => res,

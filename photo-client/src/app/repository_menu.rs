@@ -1,8 +1,7 @@
 use super::App;
 use shared::Tree;
 use egui::{Color32, RichText, Frame, Checkbox};
-use super::Commands;
-use super::ConnectionStatus;
+use super::{Commands, ConnectionStatus};
 
 impl App {
     fn repository_list(&mut self, ui: &mut egui::Ui) {
@@ -21,7 +20,6 @@ impl App {
                     if let Some(cli_tx) = &self.cli_tx {
                         let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
                         cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
-                        self.app_tx.send(Commands::GetSubDir(repo_name.clone())).unwrap();
                     }
                 }
             }
