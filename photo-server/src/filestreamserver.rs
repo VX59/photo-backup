@@ -101,7 +101,7 @@ impl FileStreamServer {
         let image_path = image_loc.join(file_header.file_name);
 
         self.tree.add_history( format!("+{}", image_path.to_str().unwrap().to_string()));
-        self.tree.apply_history(self.tree.version + 1);
+        self.tree.apply_history(self.tree.version);
         self.tree.save_to_file(&self.tree.path);
 
         println!("Receiving file: {} ({} bytes)", image_path.to_str().unwrap().to_string(), file_header.file_size);

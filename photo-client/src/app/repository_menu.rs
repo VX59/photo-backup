@@ -19,11 +19,9 @@ impl App {
                     self.ui.file_explorer_path.clear();
                     self.ui.file_explorer_path.push(repo_name.clone());
                     if let Some(cli_tx) = &self.cli_tx {
-                        self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
-                        if let Some (tree) = &mut self.ui.tree {
-                            cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
-                            self.app_tx.send(Commands::GetSubDir(repo_name.clone())).unwrap();
-                        }
+                        let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
+                        cli_tx.send(Commands::GetRepoTree(repo_name.clone(),tree.version)).unwrap();
+                        self.app_tx.send(Commands::GetSubDir(repo_name.clone())).unwrap();
                     }
                 }
             }
@@ -149,15 +147,7 @@ impl App {
                 let subdir = self.ui.file_explorer_path[i].clone();
                 if ui.button(format!("/{}", subdir)).clicked() {
                     self.ui.file_explorer_path.truncate(i+1);
-
-                    if let Some(selected_repo) = &self.ui.selected_repo {
-                        if self.ui.tree.is_none() {
-                            let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
-                            self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
-
-                        }
-                        self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
-                    }
+                    self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
                     break;
                 };
             }
@@ -168,14 +158,7 @@ impl App {
                     if entry.is_directory{
                         if ui.button(entry.name.to_string()).clicked() {
                             self.ui.file_explorer_path.push(entry.name.clone());
-                            if let Some(selected_repo) = &self.ui.selected_repo {
-                                if self.ui.tree.is_none() {
-                                    let repo_name = self.ui.repo_status.keys().nth(*selected_repo).unwrap().to_string();
-                                    self.ui.tree = Some(Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
-
-                                }
-                                self.app_tx.send(Commands::GetSubDir(entry.name.clone())).unwrap();
-                            }
+                            self.app_tx.send(Commands::GetSubDir(entry.name.clone())).unwrap();
                         }
                     } else {
                         ui.label(entry.name.clone());

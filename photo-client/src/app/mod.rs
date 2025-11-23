@@ -43,7 +43,10 @@ impl App {
                         }
                     }
                 }
-
+                Commands::PostRepoTree(tree, repo_name) => {
+                    self.ui.tree = Some(tree);
+                    self.app_tx.send(Commands::GetSubDir(repo_name)).ok(); // maybe issue well see
+                }
                 Commands::PostRepos(repos) => {       
                     self.ui.selected_repo = None;
                     self.ui.repo_status.clear();             

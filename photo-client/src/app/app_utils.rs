@@ -14,6 +14,7 @@ pub enum Commands {
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),
     GetRepoTree(String,i32),
+    PostRepoTree(Tree, String),
     GetSubDir(String),
 }
 

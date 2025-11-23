@@ -105,32 +105,47 @@ impl ImageClient {
                                 let response = read_response(stream)?;
                                 self.log_response(&response)?;
 
-                                // update the app etc
                                 if response.status_code == ResponseCodes::OK {
-                                    if response.body.len() > 0 {
-                                        if self.trees.contains_key(&repo_name) == false {
-                                            let tree = Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string());
-                                            self.trees.insert(repo_name.clone(), tree.clone());
-                                        }
-                                        let tree_updates:HashMap<i32,String> = serde_json::from_slice(&response.body)?;
-                                        
-                                        if tree_updates.len() == 0 {
-                                            self.app_tx.send(Commands::Log(format!("No tree updates for {}", repo_name)))?;
+                                    let mut tree: Tree;
+
+                                    if !response.body.is_empty() {
+                                        let Some(existing_tree) = self.trees.get(&repo_name) else {
+                                            self.app_tx.send(Commands::Log(
+                                                format!("tree {} not found", repo_name)
+                                            ))?;
                                             continue;
-                                        } else {
-                                            let tree = self.trees.get_mut(&repo_name).unwrap();
+                                        };
 
-                                            let version = tree_updates.keys().cloned().max().unwrap_or(0);
+                                        tree = existing_tree.clone();
 
-                                            for (_, history_entry) in tree_updates {
-                                                tree.add_history( history_entry);
-                                            }
-                                            tree.apply_history(version);
-                                            self.app_tx.send(Commands::Log(format!("Applying history from index {} to {}", version-tree.version, version)))?;
-                                            tree.save_to_file(&tree.path);
+                                        let tree_updates: HashMap<i32, String> =
+                                            serde_json::from_slice(&response.body)?;
+
+                                        let version = tree_updates.keys().cloned().max().unwrap_or(0);
+
+                                        self.app_tx.send(Commands::Log(
+                                            format!(
+                                                "Applying history from index {} to {}",
+                                                version - tree.version,
+                                                version
+                                            )
+                                        ))?;
+
+                                        for (_, history_entry) in tree_updates {
+                                            tree.add_history(history_entry);
                                         }
+
+                                        tree.apply_history(version);
+                                        tree.save_to_file(&tree.path);
+
+                                    } else {
+                                        let tree_path = format!("trees/{repo_name}.tree");
+                                        tree = Tree::load_from_file(&tree_path);
                                     }
+
+                                    self.app_tx.send(Commands::PostRepoTree(tree.clone(), repo_name))?;
                                 }
+
                            }
                         }
 
@@ -183,11 +198,11 @@ impl ImageClient {
         Ok(())
     }
 
-    pub fn remove_repository(&mut self, repo:&String) -> anyhow::Result<()> {
+    pub fn remove_repository(&mut self, repo_name:&String) -> anyhow::Result<()> {
         if let Some(stream) = self.command_stream.as_mut() {
             let request = Request {
                 request_type: RequestTypes::RemoveRepository,
-                body: repo.clone().as_bytes().to_vec(),
+                body: repo_name.clone().as_bytes().to_vec(),
             };
 
             send_request(request, stream)?;
@@ -195,9 +210,10 @@ impl ImageClient {
             self.log_response(&response)?;
         
             if response.status_code == ResponseCodes::OK {
-                self.config.repo_config.remove(repo);
+                self.config.repo_config.remove(repo_name);
+                self.trees.remove(repo_name);
                 self.config.save_to_file("./photo-client-config.json");
-                self.app_tx.send(Commands::RemoveRepository(repo.to_string()))?;
+                self.app_tx.send(Commands::RemoveRepository(repo_name.to_string()))?;
             }            
         }
         Ok(())
@@ -264,8 +280,11 @@ impl ImageClient {
                         let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                         let file_streaming_client_handle = self.initiate_file_streaming_client(repo_name.to_string(), repo_config.watch_directory.to_string(), stop_flag.clone())?;
 
-                        self.repo_threads.insert(repo_name, (file_streaming_client_handle, stop_flag));
+                        self.repo_threads.insert(repo_name.clone(), (file_streaming_client_handle, stop_flag));
                     }
+                    let tree_path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
+                    let tree:Tree = Tree::load_from_file(&tree_path);
+                    self.trees.insert(repo_name, tree);
                 }
             } else {
                 // the repo list is probably empty
@@ -338,7 +357,9 @@ impl ImageClient {
                     path: ("trees".to_string() + "/" + &repo_name + ".tree").to_string(),
                     name: repo_name.clone(),
                 };
+                self.trees.insert(repo_name.clone(), tree.clone());
                 Tree::save_to_file(&tree,&tree.path);
+
             }
         }
 
