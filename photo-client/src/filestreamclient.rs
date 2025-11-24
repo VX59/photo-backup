@@ -3,7 +3,7 @@ use std::{path::{Path,PathBuf}, io::{prelude::*, Cursor}, sync::{mpsc,Arc,atomic
 use bincode::{config, encode_into_slice};
 use image::ImageReader;
 use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
-use shared::{read_response, Response, Log, FileHeader};
+use shared::{read_response, Response, Log, Notify, FileHeader};
 use crate::app::{Commands};
 
 pub struct FileStreamClient {
@@ -74,7 +74,9 @@ impl FileStreamClient {
         }
 
         self.stream.shutdown(std::net::Shutdown::Both).ok();
-        self.app_tx.send(Commands::Log("Streaming client stopped.".to_string()))?;
+        let message = "Streaming client stopped.".to_string();
+        self.app_tx.send(Commands::Log(message.clone()))?;
+        self.app_tx.send(Commands::Notify(message.clone()))?;
 
         Ok(())
     }
@@ -165,7 +167,16 @@ impl FileStreamClient {
 
         let response = read_response(&mut self.stream)?;
         self.log_response(&response)?;
+        self.notify_app(&response)?;
 
+        Ok(())
+    }
+}
+
+impl Notify for FileStreamClient {
+    fn notify_app(&self, response:&Response) -> anyhow::Result<()> {   
+        let response_message = String::from_utf8_lossy(&response.body);
+        let _ = self.app_tx.send(Commands::Notify(format!("{}", response_message)))?;
         Ok(())
     }
 }

@@ -21,6 +21,10 @@ impl App {
     fn client_command_receiver(&mut self) {
         while let Ok(msg) = self.app_rx.try_recv() {
             match msg {
+                Commands::Notify(msg) => {
+                    self.ui.notification = Some(msg);
+                }
+
                 Commands::Log(msg) => {
                     writeln!(self.log_file, "{}", msg).ok();
                 }

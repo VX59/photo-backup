@@ -1,7 +1,7 @@
 use super::Client;
 use std::{collections::HashMap, sync::{Arc, atomic}};
 use shared::{send_request,RequestTypes,ResponseCodes,Tree,
-            read_response, Request, Log};
+            read_response, Request, Log, Notify};
 use crate::app::{Commands, ConnectionStatus, RepoConfig};
 use serde_json::json;
 
@@ -17,6 +17,7 @@ impl Client {
 
             let response = read_response(stream)?;
             self.log_response(&response)?;
+            self.notify_app(&response)?;
 
             if response.status_code == ResponseCodes::OK {
                 self.get_repositories()?;
@@ -50,6 +51,7 @@ impl Client {
             send_request(request, stream)?;
             let response = read_response(stream)?;
             self.log_response(&response)?;
+            self.notify_app(&response)?;
 
             if response.status_code == ResponseCodes::OK {
                 // send the repo list to the app
@@ -80,11 +82,12 @@ impl Client {
         match self.repo_threads.remove(repo) {
             Some((handle,stop_flag)) => {
                 stop_flag.store(true, atomic::Ordering::Relaxed);
-                self.app_tx.send(Commands::Log(format!("{} client thread stop flag set", repo).to_string()))?;
 
                 if let Err(_e) = handle.join() {
-                    self.app_tx.send(Commands::Log(format!("{} client thread failed to join", repo).to_string()))?;
-                    return Err(anyhow::anyhow!(format!("{} client thread failed to join", repo)));
+                    let message = format!("{} client thread failed to join", repo).to_string();
+                    self.app_tx.send(Commands::Log(message.clone()))?;
+                    self.app_tx.send(Commands::Notify(message.clone()))?;
+                    return Err(anyhow::anyhow!(message.clone()));
                 }
             },
             None => {
@@ -102,6 +105,7 @@ impl Client {
 
             let response = read_response(stream)?;
             self.log_response(&response)?;
+            self.notify_app(&response)?;
 
             let new_status = match response.status_code {
                 ResponseCodes::OK => ConnectionStatus::Disconnected,
@@ -159,6 +163,7 @@ impl Client {
             send_request(request, stream)?;
             let response = read_response(stream)?;
             self.log_response(&response)?;
+            self.notify_app(&response)?;
 
             if response.status_code == ResponseCodes::OK {
                 if !response.body.is_empty() {
@@ -175,6 +180,13 @@ impl Client {
                         )
                     ))?;
 
+                    self.app_tx.send(Commands::Notify(
+                        format!(
+                            "Applying history from index {} to {}",
+                            new_version - tree.version,
+                            new_version
+                        )
+                    ))?;
                     for (_, history_entry) in tree_updates {
                         tree.add_history(history_entry);
                     }
