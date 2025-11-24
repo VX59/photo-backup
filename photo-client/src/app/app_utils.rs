@@ -15,6 +15,7 @@ pub enum Commands {
     GetRepoTree(String),
     PostRepoTree(Tree, String),
     GetSubDir(String),
+    Notify(String),
 }
 
 #[derive(PartialEq)]
@@ -49,6 +50,7 @@ pub struct UiState {
     pub file_explorer_path:Vec<String>,
     pub subdir_contents:Option<Vec<FileSystemEntry>>,
     pub tree: Option<Tree>,
+    pub notification: Option<String>,
 }
 
 impl Default for UiState {
@@ -62,6 +64,7 @@ impl Default for UiState {
             file_explorer_path: Vec::new(),
             subdir_contents: None,
             tree: None,
+            notification: None,
         }
     }
 }

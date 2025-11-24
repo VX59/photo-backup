@@ -1,5 +1,5 @@
 use super::App;
-use egui::{Color32, RichText, Frame, Checkbox};
+use egui::{Checkbox, Color32, Frame, RichText, ScrollArea};
 use super::{Commands, ConnectionStatus};
 
 impl App {
@@ -139,27 +139,30 @@ impl App {
                 }
             });
             ui.horizontal(|ui| {
-            for i in 0..self.ui.file_explorer_path.len() {
-                let subdir = self.ui.file_explorer_path[i].clone();
-                if ui.button(format!("/{}", subdir)).clicked() {
-                    self.ui.file_explorer_path.truncate(i+1);
-                    self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
-                    break;
-                };
-            }
-            });
-            
-            if let Some(contents) = &self.ui.subdir_contents {
-                for entry in contents {
-                    if entry.is_directory{
-                        if ui.button(entry.name.to_string()).clicked() {
-                            self.ui.file_explorer_path.push(entry.name.clone());
-                            self.app_tx.send(Commands::GetSubDir(entry.name.clone())).unwrap();
-                        }
-                    } else {
-                        ui.label(entry.name.clone());
-                    }
+                for i in 0..self.ui.file_explorer_path.len() {
+                    let subdir = self.ui.file_explorer_path[i].clone();
+                    if ui.button(format!("/{}", subdir)).clicked() {
+                        self.ui.file_explorer_path.truncate(i+1);
+                        self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
+                        break;
+                    };
                 }
+            });
+            if let Some(contents) = &self.ui.subdir_contents {
+                ScrollArea::vertical()
+                .auto_shrink([false;2])
+                .show(ui, |ui| {
+                    for entry in contents {
+                        if entry.is_directory{
+                            if ui.button(entry.name.to_string()).clicked() {
+                                self.ui.file_explorer_path.push(entry.name.clone());
+                                self.app_tx.send(Commands::GetSubDir(entry.name.clone())).unwrap();
+                            }
+                        } else {
+                            ui.label(entry.name.clone());
+                        }
+                    }
+                });
             } else {
                 ui.label("Directory is Empty");
             }
@@ -174,13 +177,9 @@ impl App {
                 self.repository_list(ui);
                 ui.separator();
                 self.repository_controls(ui);
-                ui.separator();
-                self.file_explorer(ui);
             });
-            if ui.button("Save Configuration").clicked() {
-                self.app_tx.send(Commands::Log("Saving configuration...".to_string())).unwrap();
-                self.config.save_to_file(self.config_path.to_str().unwrap());
-            }
+            ui.separator();
+            self.file_explorer(ui);
         }
     }
 }

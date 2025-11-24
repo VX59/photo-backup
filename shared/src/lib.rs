@@ -202,3 +202,7 @@ impl Config {
 pub trait Log {
     fn log_response(&self, response:&Response)  -> anyhow::Result<()>;
 }
+
+pub trait Notify {
+    fn notify_app(&self, response:&Response) -> anyhow::Result<()>;
+}

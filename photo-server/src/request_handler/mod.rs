@@ -75,13 +75,9 @@ impl PhotoServerRequestHandler {
                     body: "Successfully set the storage directory path".as_bytes().to_vec()
                 }
             }
-            
             send_response(response, &mut self.stream)?;
-
             Ok(())
     }
-
-    
 
     fn get_repos(&mut self) -> anyhow::Result<()> {
         let response:Response;

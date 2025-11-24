@@ -1,7 +1,7 @@
 use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream,
         path::PathBuf, sync::Arc, sync::atomic};
 use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree,
-            read_response, Request, Log};
+            read_response, Request, Log, Notify};
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
 use crate::filestreamclient::FileStreamClient;
 
@@ -44,7 +44,7 @@ impl Client {
                 if let Some(stream) = &mut self.command_stream {
                     let response = read_response(stream)?;
                     self.log_response(&response)?;
-                    
+                    self.notify_app(&response)?;
                     self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Connected))?;
                 }
 
@@ -66,12 +66,12 @@ impl Client {
                     stream.shutdown(std::net::Shutdown::Both)?;
                 }
                 self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
-                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
+                self.app_tx.send(Commands::Notify("Client stopped.".to_string()))?;
             },
             Err(e) => {
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
-                self.app_tx.send(Commands::Log("Photo Client stopped.".to_string()))?;
+                self.app_tx.send(Commands::Notify("Client stopped.".to_string()))?;
                 return Err(anyhow::anyhow!(e));
             },
         }
@@ -118,6 +118,7 @@ impl Client {
             send_request(request, stream)?;
             let response = read_response(stream)?;
             self.log_response(&response)?;
+            self.notify_app(&response)?;
 
             if response.status_code == ResponseCodes::OK {
                 self.config.save_to_file("./photo-client-config.json");
@@ -139,13 +140,15 @@ impl Client {
 
             let response = read_response(stream)?;
             self.log_response(&response)?;
-            
+            self.notify_app(&response)?;
+
             let file_streaming_service = String::from_utf8_lossy(&response.body).to_string();
             let mut file_stream = TcpStream::connect(file_streaming_service)?;
 
             // handshake to confirm connection .. blocking
             let response = read_response(&mut file_stream)?;
             self.log_response(&response)?;
+            self.notify_app(&response)?;
 
             let new_status = match response.status_code {
                 ResponseCodes::OK => ConnectionStatus::Connected,
@@ -166,6 +169,14 @@ impl Client {
         Err(anyhow::anyhow!("Main stream is not connected"))
     }
 
+}
+
+impl Notify for Client {
+    fn notify_app(&self, response:&Response) -> anyhow::Result<()> {   
+        let response_message = String::from_utf8_lossy(&response.body);
+        let _ = self.app_tx.send(Commands::Notify(format!("{}", response_message)))?;
+        Ok(())
+    }
 }
 
 impl Log for Client {

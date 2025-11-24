@@ -11,11 +11,15 @@ impl App {
                 self.ui.subdir_contents = None;
                 self.ui.tree = None;
                 if self.config.server_address.is_empty() | self.config.server_storage_directory.is_empty() {
-                    self.app_tx.send(Commands::Log("server address or storage directory not set".to_string())).unwrap();
+                    let message = "server address or storage directory not set".to_string();
+                    self.app_tx.send(Commands::Log(message.clone())).unwrap();
+                    self.app_tx.send(Commands::Notify(message.clone())).unwrap();
                 } else {
                     if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
                         self.ui.connection_status = ConnectionStatus::Connecting;
-                        self.app_tx.send(Commands::Log("Launching a Photo Client command channel...".to_string())).unwrap();
+                        let message = "Launching a Photo Client command channel...".to_string();
+                        self.app_tx.send(Commands::Log(message.clone())).unwrap();
+                        self.app_tx.send(Commands::Notify(message.clone())).unwrap();
                         self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
                     
                         let log_tx_clone = self.app_tx.clone();
@@ -41,14 +45,12 @@ impl App {
     fn disconnect_from_server(&mut self, ui:&mut egui::Ui) {
         if self.ui.connection_status == ConnectionStatus::Connected {
             if ui.button("Disconnect").clicked() {
-                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) != false {
-                    self.app_tx.send(Commands::Log("Photo Client is already stopped or never started.".to_string())).unwrap();
-                    return;
-                }
                 self.ui.connection_status = ConnectionStatus::Disconnecting;
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
 
-                let _ = self.app_tx.send(Commands::Log("Stopping Photo Client...".to_string()));
+                let message = "Stopping Client...".to_string();
+                let _ = self.app_tx.send(Commands::Log(message.clone()));
+                let _ = self.app_tx.send(Commands::Notify(message.clone()));
 
                 if let Some(handle) = self.client_handle.take() {
                     let _ = handle.join();
@@ -93,14 +95,28 @@ impl App {
         self.connect_config(ui);
 
         if self.ui.connection_status == ConnectionStatus::Connected {
-            ui.label("Global storage path on Server:");
-            ui.text_edit_singleline(&mut self.config.server_storage_directory);
-            if ui.button("Save Global-Storage Path").clicked() {
-                if let Some(cli_tx) = &self.cli_tx {
-                    let storage_path = self.config.server_storage_directory.clone();
-                    cli_tx.send(Commands::SetStoragePath(storage_path)).unwrap()
+            ui.label("Global storage path");
+            ui.set_width(ui.available_width());
+
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.config.server_storage_directory);
+                if ui.button("Save global storage path").clicked() {
+                    if let Some(cli_tx) = &self.cli_tx {
+                        let storage_path = self.config.server_storage_directory.clone();
+                        cli_tx.send(Commands::SetStoragePath(storage_path)).unwrap()
+                    }
                 }
-            }
+                if ui.button("Save configuration").clicked() {
+                    let message = "Saving configuration...".to_string();
+                    self.app_tx.send(Commands::Log(message.clone())).unwrap();
+                    self.app_tx.send(Commands::Notify(message.clone())).unwrap();
+
+                    self.config.save_to_file(self.config_path.to_str().unwrap());
+                }
+                if let Some(notification) = &mut self.ui.notification {
+                    ui.label(notification.to_string());
+                }
+            });
         }
     }
 }
