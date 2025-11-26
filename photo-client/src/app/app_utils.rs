@@ -43,7 +43,9 @@ pub struct FileSystemEntry {
 }
 pub struct UiState {
     pub show_create_ui: bool,
+    pub show_remove_ui: bool,
     pub new_repo_name: String,
+    pub remove_repo_name: String,
     pub selected_repo: Option<usize>,
     pub connection_status: ConnectionStatus,
     pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
@@ -58,7 +60,9 @@ impl Default for UiState {
         Self {
             connection_status: ConnectionStatus::Disconnected,
             show_create_ui: false,
+            show_remove_ui: false,
             new_repo_name: String::new(),
+            remove_repo_name: String::new(),
             selected_repo: None,
             repo_status: std::collections::HashMap::new(),
             file_explorer_path: Vec::new(),
@@ -72,6 +76,7 @@ impl Default for UiState {
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct RepoConfig {
     pub auto_connect: bool,
+    pub track_modifications: bool,
     pub watch_directory: String,
 }
 
