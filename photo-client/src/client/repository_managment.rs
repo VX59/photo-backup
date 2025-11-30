@@ -141,14 +141,20 @@ impl Client {
 
     pub fn get_repo_tree(&mut self, repo_name:String) ->anyhow::Result<()>{
         let mut tree: Tree;
-        let Some(existing_tree) = self.trees.get(&repo_name) else {
-            self.app_tx.send(Commands::Log(
-                format!("tree {} not found", repo_name)
-            ))?;
-            return Err(anyhow::anyhow!(format!("tree {} not found", repo_name)));
+        if let Some(existing_tree) = self.trees.get(&repo_name) {
+            tree = existing_tree.clone();
+        } else {
+            self.app_tx.send(Commands::Log(format!("{} tree not found, initializing tree", repo_name.clone())))?;
+            tree = Tree {
+                    version: 0,
+                    content: HashMap::new(),
+                    history: HashMap::new(),
+                    path: ("trees".to_string() + "/" + &repo_name + ".tree").to_string(),
+                    name: repo_name.clone(),
+                };
+            self.trees.insert(repo_name.clone(), tree.clone());
+            tree.save_to_file(&tree.path);
         };
-
-        tree = existing_tree.clone();
         
         let body = json!({
             "repo_name": repo_name,
@@ -192,8 +198,8 @@ impl Client {
                     }
 
                     tree.apply_history(new_version);
+                    self.trees.insert(repo_name.clone(), tree.clone());
                     tree.save_to_file(&tree.path);
-
                 }
 
                 self.app_tx.send(Commands::PostRepoTree(tree.clone(), repo_name))?;

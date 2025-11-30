@@ -10,33 +10,28 @@ impl App {
                 self.ui.file_explorer_path.clear();
                 self.ui.subdir_contents = None;
                 self.ui.tree = None;
-                if self.config.server_address.is_empty() | self.config.server_storage_directory.is_empty() {
-                    let message = "server address or storage directory not set".to_string();
+
+                if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.ui.connection_status = ConnectionStatus::Connecting;
+
+                    let message = "Launching a Photo Client command channel...".to_string();
                     self.app_tx.send(Commands::Log(message.clone())).unwrap();
                     self.app_tx.send(Commands::Notify(message.clone())).unwrap();
+                    self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                
+                    let log_tx_clone = self.app_tx.clone();
+                    let stop_flag_clone = self.stop_flag.clone();
+                    let config_clone = self.config.clone();
+                    let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
+                    self.cli_tx = Some(cmd_tx.clone());
+                    self.client_handle = Some(std::thread::spawn(move || {
+                        let mut client = Client::new(log_tx_clone, cmd_rx, stop_flag_clone, config_clone);
+                        if let Err(e) = client.connect() {
+                            client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
+                        }
+                    }));
                 } else {
-                    if self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                        self.ui.connection_status = ConnectionStatus::Connecting;
-                        let message = "Launching a Photo Client command channel...".to_string();
-                        self.app_tx.send(Commands::Log(message.clone())).unwrap();
-                        self.app_tx.send(Commands::Notify(message.clone())).unwrap();
-                        self.stop_flag.store(false, std::sync::atomic::Ordering::Relaxed);
-                    
-                        let log_tx_clone = self.app_tx.clone();
-                        let stop_flag_clone = self.stop_flag.clone();
-
-                        let (cmd_tx, cmd_rx) = mpsc::channel::<Commands>();
-                        self.cli_tx = Some(cmd_tx.clone());
-
-                        self.client_handle = Some(std::thread::spawn(move || {
-                            let mut client = Client::new(log_tx_clone, cmd_rx, stop_flag_clone);
-                            if let Err(e) = client.connect() {
-                                client.app_tx.send(Commands::Log(format!("{}",e).to_string())).unwrap();
-                            }
-                        }));
-                    } else {
-                        self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
-                    }    
+                    self.app_tx.send(Commands::Log("The client is already running".to_string())).unwrap();
                 }
             }
         }
@@ -97,9 +92,8 @@ impl App {
         if self.ui.connection_status == ConnectionStatus::Connected {
             ui.label("Global storage path");
             ui.set_width(ui.available_width());
-
+            ui.text_edit_singleline(&mut self.config.server_storage_directory);
             ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.config.server_storage_directory);
                 if ui.button("Save global storage path").clicked() {
                     if let Some(cli_tx) = &self.cli_tx {
                         let storage_path = self.config.server_storage_directory.clone();
@@ -107,7 +101,7 @@ impl App {
                     }
                 }
                 if ui.button("Save configuration").clicked() {
-                    let message = "Saving configuration...".to_string();
+                    let message: String = "Saving configuration...".to_string();
                     self.app_tx.send(Commands::Log(message.clone())).unwrap();
                     self.app_tx.send(Commands::Notify(message.clone())).unwrap();
 

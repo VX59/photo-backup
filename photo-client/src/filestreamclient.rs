@@ -11,15 +11,17 @@ pub struct FileStreamClient {
     watch_directory:String,
     pub app_tx:mpsc::Sender<Commands>,
     stop_flag:Arc<atomic::AtomicBool>,
+    track_modifications:bool,
 }
 
 impl FileStreamClient {
-    pub fn new(stream:TcpStream, watch_directory:String, app_tx:mpsc::Sender<Commands>, stop_flag: Arc<atomic::AtomicBool>) -> Self {
+    pub fn new(stream:TcpStream, watch_directory:String, app_tx:mpsc::Sender<Commands>, stop_flag: Arc<atomic::AtomicBool>, track_modifications:bool) -> Self {
         FileStreamClient { 
             stream,
             watch_directory,
             app_tx,
             stop_flag,
+            track_modifications,
         }
     }
 
@@ -55,11 +57,21 @@ impl FileStreamClient {
                         }
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
-                        for path in new_event.paths {
+                        for path in new_event.paths.clone() {
                             if let Err(e) = self.upload_file(path) {
                                 eprintln!("Failed to send image: {}", e);
                                 break;
                             };
+                        }
+                    }
+                    if self.track_modifications {
+                        if let EventKind::Modify(notify::event::ModifyKind::Any) = new_event.kind {
+                            for path in new_event.paths {
+                                if let Err(e) = self.upload_file(path) {
+                                    eprintln!("Failed to send image: {}", e);
+                                    break;
+                                };
+                            }
                         }
                     }
                 },
@@ -106,28 +118,29 @@ impl FileStreamClient {
         let file_ext = local_path.extension()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
-
         let file_datetime = local_path.metadata()?.created()?;
-
-        let image = ImageReader::open(local_path.clone())?.decode().expect("unable to decode image");
         let mut image_bytes: Vec<u8> = Vec::new();
+        if ["png,jpg,jpeg,gif"].contains(&file_ext) {
+            let image = ImageReader::open(local_path.clone())?.decode().expect("unable to decode image");
 
-        match file_ext {
-            "png" => {
-            image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Png)
-                .expect("Failed to write PNG image");
-            },
-            "jpg" | "jpeg" => {
-                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
-                .expect("Failed to write JPEG image");
-            },
+            match file_ext {
+                "png" => {
+                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Png)
+                    .expect("Failed to write PNG image");
+                },
+                "jpg" | "jpeg" => {
+                    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
+                    .expect("Failed to write JPEG image");
+                },
 
-            "gif" => {
-                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Gif)
-                .expect("Failed to write GIF image");
+                "gif" => {
+                    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Gif)
+                    .expect("Failed to write GIF image");
+                }
+                _ => return Err(anyhow::anyhow!("Unsupported image format")), // maybe fix this
             }
-            _ => return Err(anyhow::anyhow!("Unsupported image format")),
-
+        } else {
+            image_bytes = std::fs::read(local_path.clone())?;
         }
 
         let repo_root = Path::new(&self.watch_directory);

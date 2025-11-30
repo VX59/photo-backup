@@ -1,5 +1,4 @@
-use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream,
-        path::PathBuf, sync::Arc, sync::atomic};
+use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream, sync::Arc, sync::atomic};
 use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree,
             read_response, Request, Log, Notify};
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
@@ -18,14 +17,13 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag:Arc<atomic::AtomicBool>) -> Self {
-        let config_path = PathBuf::from("photo-client-config.json");
+    pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag:Arc<atomic::AtomicBool>, config:ClientConfig) -> Self {
 
         Client {
             app_tx,
             rx, 
             stop_flag,
-            config: ClientConfig::load_from_file(config_path.to_str().unwrap()),
+            config: config,
             command_stream: None,
             repo_threads: HashMap::new(),
             trees: HashMap::new()
@@ -121,7 +119,8 @@ impl Client {
             self.notify_app(&response)?;
 
             if response.status_code == ResponseCodes::OK {
-                self.config.save_to_file("./photo-client-config.json");
+                self.config.server_storage_directory = storage_directory;
+                self.config.save_to_file("photo-client-config.json");
 
             }
             self.get_repositories()?;
@@ -157,10 +156,15 @@ impl Client {
 
             self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
 
+            let mut track_mods = false;
+            if let Some(repoconfig) = self.config.repo_config.get(&repo) {
+                track_mods = repoconfig.track_modifications;
+            };
+            let track_mods_clone = track_mods.clone();
             // run the file streaming channel on a seperate thread
             let app_tx_clone = self.app_tx.clone();
             return Ok(std::thread::spawn(move || {
-                let mut file_stream_client = FileStreamClient::new(file_stream, watch_directory, app_tx_clone, stop_flag);
+                let mut file_stream_client = FileStreamClient::new(file_stream, watch_directory, app_tx_clone, stop_flag, track_mods_clone);
                 if let Err(e) = file_stream_client.run() {
                     let _ = file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e)));
                 }

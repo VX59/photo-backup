@@ -103,6 +103,7 @@ impl App {
                 }
                 
                 ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().auto_connect, RichText::new("Enable auto-connect").italics()));
+                ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().track_modifications, RichText::new("Track file modifications").italics()));
 
                 if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Connected) {
                     if ui.button("Disconnect").clicked() {
@@ -117,11 +118,38 @@ impl App {
                         }
                     }
                 }
-                if ui.button("Remove Repository").clicked() {
-                    self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
-                    if let Some(cli_tx) = &self.cli_tx {
-                        cli_tx.send(Commands::RemoveRepository(repo_name.to_string())).unwrap();
+                if ui.button("Remove repository").clicked() {
+                    self.ui.show_remove_ui = !self.ui.show_remove_ui;
+                    if !self.ui.show_remove_ui {
+                        self.ui.remove_repo_name.clear();
                     }
+                }
+                if self.ui.show_remove_ui {
+                    ui.horizontal(|ui| {
+                        let response = ui.text_edit_singleline(&mut self.ui.remove_repo_name);
+                        
+                        if self.ui.remove_repo_name.is_empty() && !response.has_focus() {
+                            let painter = ui.painter();
+                            painter.text(
+                                response.rect.left_top() + egui::vec2(4.0, 2.0), // small padding inside box
+                                egui::Align2::LEFT_TOP,
+                                "Enter repo name to remove...",
+                                egui::TextStyle::Body.resolve(ui.style()),
+                                ui.visuals().weak_text_color(), // faded color
+                            );
+                        }
+
+                        if self.ui.remove_repo_name == repo_name.clone() {
+                            if ui.button("permanently remove").clicked() {
+                                self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);
+                                if let Some(cli_tx) = &self.cli_tx {
+                                    cli_tx.send(Commands::RemoveRepository(repo_name.to_string())).unwrap();
+                                }
+                                self.ui.remove_repo_name.clear();
+                                self.ui.show_remove_ui = false;
+                            }
+                        }
+                    });
                 }
             } else {
                 ui.label("Select a repository to see more details");
