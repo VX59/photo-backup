@@ -1,5 +1,4 @@
-use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream,
-        path::PathBuf, sync::Arc, sync::atomic};
+use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream, sync::Arc, sync::atomic};
 use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree,
             read_response, Request, Log, Notify};
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
@@ -120,6 +119,7 @@ impl Client {
             self.notify_app(&response)?;
 
             if response.status_code == ResponseCodes::OK {
+                self.config.server_storage_directory = storage_directory;
                 self.config.save_to_file("photo-client-config.json");
 
             }
