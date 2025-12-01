@@ -1,5 +1,6 @@
-use std::{collections::HashMap, path::Path};
-use serde_json;
+use std::{collections::HashMap, path::Path, io::Cursor};
+use image::ImageReader;
+use serde_json::{self, Value};
 use shared::{send_response, Request, Response, ResponseCodes, Tree};
 
 use super::PhotoServerRequestHandler;
@@ -168,6 +169,48 @@ impl PhotoServerRequestHandler {
     }
 
     pub fn get_preview(&mut self, request:Request) -> anyhow::Result<()> {
+        let name = String::from_utf8_lossy(&request.body)
+            .trim()         // removes leading/trailing whitespace
+            .replace(|c: char| c.is_control(), "_") // replace control chars with _
+            .to_string();    
+        
+        let prefix = Path::new(&self.config.storage_directory);
+        let path_buf = prefix.join(&name);
+        println!("{}", path_buf.to_string_lossy());
+        let file_ext = path_buf.extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+
+        let image = ImageReader::open(&path_buf)?.decode()?;
+
+
+        let mut thumbnail_bytes = Vec::new();
+        let thumbnail: image::DynamicImage = image.resize(256, 256,  image::imageops::FilterType::Lanczos3);
+        match file_ext {
+            "png" => {
+                thumbnail.write_to(&mut Cursor::new(&mut thumbnail_bytes), image::ImageFormat::Png)
+                    .expect("Failed to write PNG image");
+            },
+            "jpg" | "jpeg" => {
+                thumbnail.write_to(&mut Cursor::new(&mut thumbnail_bytes), image::ImageFormat::Jpeg)
+                .expect("Failed to write JPEG image");
+            },
+
+            "gif" => {
+                thumbnail.write_to(&mut Cursor::new(&mut thumbnail_bytes), image::ImageFormat::Gif)
+                .expect("Failed to write GIF image");
+            }
+            _ => return Err(anyhow::anyhow!("Unsupported image format")), // maybe fix this
+
+        }
+
+        let response = Response {
+            status_code:ResponseCodes::OK,
+            status_message:"thumbnail request".to_string(),
+            body: thumbnail_bytes,
+        };
+
+        send_response(response, &mut self.stream)?;
         Ok(())
     }
 

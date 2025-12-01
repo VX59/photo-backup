@@ -2,7 +2,7 @@ use super::Client;
 use std::{collections::HashMap, sync::{Arc, atomic}};
 use shared::{send_request,RequestTypes,ResponseCodes,Tree,
             read_response, Request, Log, Notify};
-use crate::app::{Commands, ConnectionStatus, RepoConfig};
+use crate::app::{Commands, ConnectionStatus, RepoConfig, app_utils::PreviewEntry};
 use serde_json::json;
 
 impl Client {
@@ -41,19 +41,26 @@ impl Client {
         Ok(())
     }
 
-    pub fn get_preview(&mut self, file_name:String, repo_name:String)  -> anyhow::Result<()> {
+    pub fn get_preview(&mut self, path:String, name:String)  -> anyhow::Result<()> {
         let request = Request {
             request_type : RequestTypes::GetPreview,
-            body : serde_json::to_vec(&(file_name, repo_name))?,
+            body : path.as_bytes().to_vec(),
         };
 
         if let Some(stream) = self.command_stream.as_mut() {
             send_request(request, stream)?;
             let response = read_response(stream)?;
-            self.log_response(&response)?;
 
             if response.status_code == ResponseCodes::OK {
-                let preview = response.body;
+                let preview = PreviewEntry {
+                    image: Some(response.body),
+                    last_accessed: Some(std::time::Instant::now()),
+                    name: name,
+                    file_ext: match std::path::Path::new(&path).extension() {
+                        Some(ext) => ext.to_str().unwrap().to_string(),
+                        None => return Err(anyhow::anyhow!("unable to get extension")),
+                    }
+                };
                 self.app_tx.send(Commands::PostPreview(preview))?;
             }
         }

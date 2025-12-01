@@ -1,4 +1,4 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap};
 use serde::{Deserialize, Serialize};
 use shared::Tree;
 
@@ -17,7 +17,7 @@ pub enum Commands {
     GetSubDir(String),
     Notify(String),
     GetPreview(String, String),
-    PostPreview(Vec<u8>)
+    PostPreview(PreviewEntry)
 }
 
 #[derive(PartialEq)]
@@ -44,6 +44,13 @@ pub struct FileSystemEntry {
     pub is_directory: bool,
 }
 
+#[derive(Clone)]
+pub struct PreviewEntry {
+    pub last_accessed:Option<std::time::Instant>,
+    pub image:Option<Vec<u8>>,
+    pub name:String,
+    pub file_ext: String,
+}
 pub struct UiState {
     pub show_create_ui: bool,
     pub show_remove_ui: bool,
@@ -56,7 +63,8 @@ pub struct UiState {
     pub subdir_contents:Option<Vec<FileSystemEntry>>,
     pub tree: Option<Tree>,
     pub notification: Option<String>,
-    pub preview_cache: HashMap<String, Vec<u8>>
+    pub preview_cache: HashMap<String, PreviewEntry>,
+    pub preview_entry:Option<PreviewEntry>,
 }
 
 impl Default for UiState {
@@ -74,6 +82,7 @@ impl Default for UiState {
             tree: None,
             notification: None,
             preview_cache: HashMap::new(),
+            preview_entry: None,
         }
     }
 }

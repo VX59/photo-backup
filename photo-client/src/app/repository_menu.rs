@@ -1,5 +1,6 @@
 use super::App;
-use egui::{Checkbox, Color32, Frame, RichText, ScrollArea};
+use egui::{Checkbox, Color32, ColorImage, Frame, ImageSource, RichText, ScrollArea};
+use egui::{Context, TextureHandle, TextureOptions};
 use super::{Commands, ConnectionStatus};
 
 impl App {
@@ -157,7 +158,7 @@ impl App {
         });
     }
 
-    fn file_explorer(&mut self, ui: &mut egui::Ui) {
+    fn file_explorer(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
       if self.ui.connection_status == ConnectionStatus::Connected {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
@@ -194,9 +195,10 @@ impl App {
                                 } else {
                                     // ask for the thumbnail
                                     if let Some(cli_tx) = &self.cli_tx {
-                                        if let Some(tree) = &self.ui.tree {
-                                            cli_tx.send(Commands::GetPreview(entry.name.clone(), tree.name.clone())).unwrap();
-                                        }
+                                        let path_root = self.ui.file_explorer_path.join("/");
+                                        let path = path_root + "/" + entry.name.clone().as_str();
+                                        self.app_tx.send(Commands::Log(path.clone())).unwrap();
+                                        cli_tx.send(Commands::GetPreview(path, entry.name.clone())).unwrap();
                                     };
                                 }
                             };
@@ -206,11 +208,37 @@ impl App {
             } else {
                 ui.label("Directory is Empty");
             }
-          });
+        });
+        ui.vertical(|ui| {
+            if let Some(preview) = &self.ui.preview_entry {
+                let ext: String = preview.clone().file_ext;
+                let format = match ext.to_lowercase().as_str() {
+                    "png" => image::ImageFormat::Png,
+                    "jpg" | "jpeg" => image::ImageFormat::Jpeg,
+                    "bmp" => image::ImageFormat::Bmp,
+                    "gif" => image::ImageFormat::Gif,
+                    _ => return Err(anyhow::anyhow!("Unsupported image format: {}", ext)),
+                };
+
+                // Read image
+                if let Some(image) = &preview.image {
+                    let dynamic_image = image::load_from_memory_with_format(&image, format).expect("failed to load image from memory");
+                    let color_image = {
+                        let img = dynamic_image.to_rgba8();
+                        let size = [img.width() as usize, img.height() as usize];
+                        ColorImage::from_rgba_unmultiplied(size, &img.into_raw())
+                    };
+                    let texture = ctx.load_texture("preview", color_image, TextureOptions::default());
+                    let image_widget = egui::Image::new(&texture);
+                    ui.add(image_widget);
+               }
+            }
+            Ok(())
+        });
       }  
     }
     
-    pub fn repository_menu(&mut self, ui: &mut egui::Ui) {
+    pub fn repository_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if self.ui.connection_status == ConnectionStatus::Connected {
             ui.separator();
             ui.horizontal(|ui| {
@@ -219,7 +247,7 @@ impl App {
                 self.repository_controls(ui);
             });
             ui.separator();
-            self.file_explorer(ui);
+            self.file_explorer(ui, ctx);
         }
     }
 }
