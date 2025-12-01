@@ -44,6 +44,7 @@ impl PhotoServerRequestHandler {
                 RequestTypes::RemoveRepository => self.remove_repository(request)?,
                 RequestTypes::GetRepoTree => self.get_repo_tree(request)?,
                 RequestTypes::SetStoragePath => self.set_storage_path(request)?,
+                RequestTypes::GetPreview => self.get_preview(request)?,
             }
         }
     }

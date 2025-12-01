@@ -21,6 +21,14 @@ impl App {
     fn client_command_receiver(&mut self) {
         while let Ok(msg) = self.app_rx.try_recv() {
             match msg {
+
+                Commands::PostPreview(preview) => {
+                    self.ui.preview_cache.insert(preview.clone().name, preview.clone());
+                    // lru cache here
+
+                    self.ui.preview_entry = Some(preview);
+                }
+
                 Commands::Notify(msg) => {
                     self.ui.notification = Some(msg);
                 }
@@ -87,7 +95,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.connect_menu(ui);       
-            self.repository_menu(ui);
+            self.repository_menu(ui, ctx);
         });
         
         self.client_command_receiver();

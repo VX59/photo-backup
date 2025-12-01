@@ -55,6 +55,7 @@ pub enum RequestTypes {
     DisconnectStream,
     RemoveRepository,
     GetRepoTree,
+    GetPreview,
 }
 
 #[derive(Serialize, Deserialize)]

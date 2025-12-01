@@ -80,6 +80,7 @@ impl Client {
             match self.rx.try_recv() {
                 Ok(new_command) => {
                     match new_command {
+                        Commands::GetPreview(path, file_name) => self.get_preview(path, file_name)?,
                         Commands::CreateRepo(msg) => self.create_repository(msg.to_string())?,
                         Commands::GetRepoTree(repo_name) => self.get_repo_tree(repo_name)?,
                         Commands::SetStoragePath(storage_directory) => self.set_storage_path(storage_directory)?,
