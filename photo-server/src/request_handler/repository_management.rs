@@ -166,4 +166,9 @@ impl PhotoServerRequestHandler {
         send_response(response, &mut self.stream)?;
         Ok(())
     }
+
+    pub fn get_preview(&mut self, request:Request) -> anyhow::Result<()> {
+        Ok(())
+    }
+
 }

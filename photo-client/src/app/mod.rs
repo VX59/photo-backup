@@ -21,6 +21,11 @@ impl App {
     fn client_command_receiver(&mut self) {
         while let Ok(msg) = self.app_rx.try_recv() {
             match msg {
+
+                Commands::PostPreview(image) => {
+
+                }
+
                 Commands::Notify(msg) => {
                     self.ui.notification = Some(msg);
                 }

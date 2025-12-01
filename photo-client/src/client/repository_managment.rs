@@ -41,6 +41,25 @@ impl Client {
         Ok(())
     }
 
+    pub fn get_preview(&mut self, file_name:String, repo_name:String)  -> anyhow::Result<()> {
+        let request = Request {
+            request_type : RequestTypes::GetPreview,
+            body : serde_json::to_vec(&(file_name, repo_name))?,
+        };
+
+        if let Some(stream) = self.command_stream.as_mut() {
+            send_request(request, stream)?;
+            let response = read_response(stream)?;
+            self.log_response(&response)?;
+
+            if response.status_code == ResponseCodes::OK {
+                let preview = response.body;
+                self.app_tx.send(Commands::PostPreview(preview))?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn get_repositories(&mut self) -> anyhow::Result<()> { 
         let request = Request {
             request_type: RequestTypes::GetRepos,

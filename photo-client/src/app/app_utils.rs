@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 use serde::{Deserialize, Serialize};
 use shared::Tree;
 
@@ -16,6 +16,8 @@ pub enum Commands {
     PostRepoTree(Tree, String),
     GetSubDir(String),
     Notify(String),
+    GetPreview(String, String),
+    PostPreview(Vec<u8>)
 }
 
 #[derive(PartialEq)]
@@ -41,6 +43,7 @@ pub struct FileSystemEntry {
     pub name: String,
     pub is_directory: bool,
 }
+
 pub struct UiState {
     pub show_create_ui: bool,
     pub show_remove_ui: bool,
@@ -48,11 +51,12 @@ pub struct UiState {
     pub remove_repo_name: String,
     pub selected_repo: Option<usize>,
     pub connection_status: ConnectionStatus,
-    pub repo_status: std::collections::HashMap<String, ConnectionStatus>,
+    pub repo_status: HashMap<String, ConnectionStatus>,
     pub file_explorer_path:Vec<String>,
     pub subdir_contents:Option<Vec<FileSystemEntry>>,
     pub tree: Option<Tree>,
     pub notification: Option<String>,
+    pub preview_cache: HashMap<String, Vec<u8>>
 }
 
 impl Default for UiState {
@@ -64,11 +68,12 @@ impl Default for UiState {
             new_repo_name: String::new(),
             remove_repo_name: String::new(),
             selected_repo: None,
-            repo_status: std::collections::HashMap::new(),
+            repo_status: HashMap::new(),
             file_explorer_path: Vec::new(),
             subdir_contents: None,
             tree: None,
             notification: None,
+            preview_cache: HashMap::new(),
         }
     }
 }

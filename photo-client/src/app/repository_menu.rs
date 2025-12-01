@@ -187,7 +187,19 @@ impl App {
                                 self.app_tx.send(Commands::GetSubDir(entry.name.clone())).unwrap();
                             }
                         } else {
-                            ui.label(entry.name.clone());
+                            if ui.label(entry.name.clone()).clicked() {
+                                if let Some(preview) = self.ui.preview_cache.get(&entry.name.clone()) {
+                                    // load the thumbnail into the preview window
+                                    self.app_tx.send(Commands::PostPreview(preview.clone())).unwrap();
+                                } else {
+                                    // ask for the thumbnail
+                                    if let Some(cli_tx) = &self.cli_tx {
+                                        if let Some(tree) = &self.ui.tree {
+                                            cli_tx.send(Commands::GetPreview(entry.name.clone(), tree.name.clone())).unwrap();
+                                        }
+                                    };
+                                }
+                            };
                         }
                     }
                 });
