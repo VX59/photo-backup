@@ -1,6 +1,5 @@
 use super::App;
-use egui::{Checkbox, Color32, ColorImage, Frame, ImageSource, RichText, ScrollArea};
-use egui::{Context, TextureHandle, TextureOptions};
+use egui::{Checkbox, Color32, ColorImage, Frame, RichText, ScrollArea};
 use super::{Commands, ConnectionStatus};
 
 impl App {
@@ -161,23 +160,42 @@ impl App {
     fn file_explorer(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
       if self.ui.connection_status == ConnectionStatus::Connected {
         ui.vertical(|ui| {
+            ui.label("Search for files");
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut self.ui.file_explorer_search);
+                if ui.button("Search Repo").clicked() {
+                    self.app_tx.send(Commands::SearchRepo(self.ui.file_explorer_search.clone())).unwrap();
+                }
+            });
+        });
+        ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.heading("File Explorer");
                 if let Some(tree) = &self.ui.tree {
                     ui.label(format!("{} files, {} subdirs", tree.history.len(), tree.content.len()));
                 }
             });
-            ui.horizontal(|ui| {
-                for i in 0..self.ui.file_explorer_path.len() {
-                    let subdir = self.ui.file_explorer_path[i].clone();
-                    if ui.button(format!("/{}", subdir)).clicked() {
-                        self.ui.file_explorer_path.truncate(i+1);
-                        self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
-                        break;
+
+            if !self.ui.search_records.is_empty() {
+                for entry in self.ui.search_records.iter() {
+                    let file_name = &entry.1;
+                    if ui.label(file_name).clicked() {
+                        // do stuff
                     };
                 }
-            });
-            if let Some(contents) = &self.ui.subdir_contents {
+            } else {
+                ui.horizontal(|ui| {
+                    for i in 0..self.ui.file_explorer_path.len() {
+                        let subdir = self.ui.file_explorer_path[i].clone();
+                        if ui.button(format!("/{}", subdir)).clicked() {
+                            self.ui.file_explorer_path.truncate(i+1);
+                            self.app_tx.send(Commands::GetSubDir(subdir.clone())).unwrap();
+                            break;
+                        };
+                    }
+                });
+                
+                if let Some(contents) = &self.ui.subdir_contents {
                 ScrollArea::vertical()
                 .auto_shrink([false;2])
                 .show(ui, |ui| {
@@ -205,8 +223,9 @@ impl App {
                         }
                     }
                 });
-            } else {
-                ui.label("Directory is Empty");
+                } else {
+                    ui.label("Directory is Empty");
+                }
             }
         });
         ui.vertical(|ui| {
@@ -220,18 +239,25 @@ impl App {
                     _ => return Err(anyhow::anyhow!("Unsupported image format: {}", ext)),
                 };
 
-                // Read image
-                if let Some(image) = &preview.image {
-                    let dynamic_image = image::load_from_memory_with_format(&image, format).expect("failed to load image from memory");
-                    let color_image = {
+                if let Some(preview) = &self.ui.preview_entry {
+                    if let Some(image) = &preview.image {
+                        let dynamic_image = image::load_from_memory_with_format(&image, format).expect("failed to load image from memory");
                         let img = dynamic_image.to_rgba8();
                         let size = [img.width() as usize, img.height() as usize];
-                        ColorImage::from_rgba_unmultiplied(size, &img.into_raw())
-                    };
-                    let texture = ctx.load_texture("preview", color_image, TextureOptions::default());
-                    let image_widget = egui::Image::new(&texture);
-                    ui.add(image_widget);
-               }
+                        let color_image = ColorImage::from_rgba_unmultiplied(size, &img.into_raw());
+                        
+
+                        if let Some(texture) = &mut self.ui.preview_texture {
+                            texture.set(color_image, egui::TextureOptions::default());
+                        } else {
+                            self.ui.preview_texture = Some(ctx.load_texture("preview", color_image, egui::TextureOptions::default()));
+                        }
+                        ctx.request_repaint(); // ensure egui redraws
+                        if let Some(texture) = &self.ui.preview_texture {
+                            ui.image(texture); // automatically renders at texture size
+                        }
+                    }
+                }
             }
             Ok(())
         });
@@ -247,7 +273,9 @@ impl App {
                 self.repository_controls(ui);
             });
             ui.separator();
-            self.file_explorer(ui, ctx);
+            if !self.ui.selected_repo.is_none() {
+                self.file_explorer(ui, ctx);
+            }
         }
     }
 }

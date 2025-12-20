@@ -17,7 +17,9 @@ pub enum Commands {
     GetSubDir(String),
     Notify(String),
     GetPreview(String, String),
-    PostPreview(PreviewEntry)
+    PostPreview(PreviewEntry),
+    SearchRepo(String),
+
 }
 
 #[derive(PartialEq)]
@@ -65,6 +67,9 @@ pub struct UiState {
     pub notification: Option<String>,
     pub preview_cache: HashMap<String, PreviewEntry>,
     pub preview_entry:Option<PreviewEntry>,
+    pub preview_texture:Option<egui::TextureHandle>,
+    pub file_explorer_search: String,
+    pub search_records: Vec<(String,String)>
 }
 
 impl Default for UiState {
@@ -83,6 +88,9 @@ impl Default for UiState {
             notification: None,
             preview_cache: HashMap::new(),
             preview_entry: None,
+            preview_texture: None,
+            file_explorer_search: String::new(),
+            search_records: Vec::new(),
         }
     }
 }

@@ -4,6 +4,7 @@ pub mod app_utils;
 
 use std::{sync::mpsc, path::PathBuf, io::Write};
 pub use app_utils::{ConnectionStatus, RepoConfig, Commands, ClientConfig, UiState, FileSystemEntry};
+use serde::de::value;
 
 pub struct App {
     pub config: ClientConfig,
@@ -24,8 +25,7 @@ impl App {
 
                 Commands::PostPreview(preview) => {
                     self.ui.preview_cache.insert(preview.clone().name, preview.clone());
-                    // lru cache here
-
+                    self.app_tx.send(Commands::Notify(format!("loading image {}", preview.clone().name))).unwrap();
                     self.ui.preview_entry = Some(preview);
                 }
 
@@ -79,11 +79,24 @@ impl App {
                         self.ui.subdir_contents = None;
                         self.ui.file_explorer_path.clear();
                     }
-
                     self.config.repo_config.remove(&repo);
                     self.ui.repo_status.remove(&repo);
                     self.ui.selected_repo = None;
                     self.config.save_to_file(self.config_path.to_str().unwrap());
+                }
+
+                Commands::SearchRepo(substring) => {
+                    self.ui.search_records.clear();
+                    if let Some(tree) = self.ui.tree.as_ref() {
+                        for (key,values) in tree.content.iter() {
+                            for record in values {
+                                let search_pattern = &substring.to_ascii_lowercase();
+                                if record.to_ascii_lowercase().contains(search_pattern) {
+                                    self.ui.search_records.push((key.clone(), record.clone()));
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {},
             }
