@@ -105,7 +105,14 @@ impl App {
                 ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().auto_connect, RichText::new("Enable auto-connect").italics()));
                 ui.add(Checkbox::new(&mut self.config.repo_config.entry(repo_name.clone()).or_default().track_modifications, RichText::new("Track file modifications").italics()));
 
-                if self.ui.repo_status.get(&repo_name.clone()) == Some(&ConnectionStatus::Connected) {
+                if self.ui.repo_status.get(&repo_name) == Some(&ConnectionStatus::Connected) {
+
+                    if ui.button("Discover Untracked").clicked() {
+                        if let Some(cli_tx) = &self.cli_tx {
+                            cli_tx.send(Commands::DiscoverUntracked(repo_name.to_string())).unwrap();
+                        }
+                    }
+
                     if ui.button("Disconnect").clicked() {
 
                         self.ui.repo_status.insert(repo_name.clone(), ConnectionStatus::Disconnecting);

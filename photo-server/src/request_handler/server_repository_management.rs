@@ -5,6 +5,12 @@ use shared::{send_response, Request, Response, ResponseCodes, Tree};
 use super::PhotoServerRequestHandler;
 
 impl PhotoServerRequestHandler {
+    pub fn discover_existing(&mut self, request:Request) -> anyhow::Result<()> {
+        
+        
+        Ok(())
+    }
+
     pub fn remove_repository(&mut self, request:Request) -> anyhow::Result<()> {
         let repo_name = String::from_utf8_lossy(&request.body)
             .trim() 

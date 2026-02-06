@@ -4,7 +4,7 @@ use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree,
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
 use crate::filestreamclient::FileStreamClient;
 
-mod repository_managment;
+mod client_repository_managment;
 
 pub struct Client {
     pub app_tx: mpsc::Sender<Commands>,
@@ -80,6 +80,7 @@ impl Client {
             match self.rx.try_recv() {
                 Ok(new_command) => {
                     match new_command {
+                        Commands::DiscoverUntracked(repo_name) => self.discover_untracked(repo_name)?,
                         Commands::CreateRepo(msg) => self.create_repository(msg.to_string())?,
                         Commands::GetRepoTree(repo_name) => self.get_repo_tree(repo_name)?,
                         Commands::SetStoragePath(storage_directory) => self.set_storage_path(storage_directory)?,

@@ -1,7 +1,6 @@
-use std::{path::{Path,PathBuf}, io::{prelude::*, Cursor}, sync::{mpsc,Arc,atomic},
+use std::{path::{Path,PathBuf}, io::{prelude::*}, sync::{mpsc,Arc,atomic},
                 time::Duration, net::TcpStream,};
 use bincode::{config, encode_into_slice};
-use image::ImageReader;
 use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
 use shared::{read_response, Response, Log, Notify, FileHeader};
 use crate::app::{Commands};
@@ -119,29 +118,7 @@ impl FileStreamClient {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
         let file_datetime = local_path.metadata()?.created()?;
-        let mut image_bytes: Vec<u8> = Vec::new();
-        if ["png,jpg,jpeg,gif"].contains(&file_ext) {
-            let image = ImageReader::open(local_path.clone())?.decode().expect("unable to decode image");
-
-            match file_ext {
-                "png" => {
-                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Png)
-                    .expect("Failed to write PNG image");
-                },
-                "jpg" | "jpeg" => {
-                    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
-                    .expect("Failed to write JPEG image");
-                },
-
-                "gif" => {
-                    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Gif)
-                    .expect("Failed to write GIF image");
-                }
-                _ => return Err(anyhow::anyhow!("Unsupported image format")), // maybe fix this
-            }
-        } else {
-            image_bytes = std::fs::read(local_path.clone())?;
-        }
+        let image_bytes: Vec<u8> = std::fs::read(local_path.clone())?;
 
         let repo_root = Path::new(&self.watch_directory);
         let relative_path = match local_path.strip_prefix(repo_root) {

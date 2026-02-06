@@ -16,6 +16,7 @@ pub enum Commands {
     PostRepoTree(Tree, String),
     GetSubDir(String),
     Notify(String),
+    DiscoverUntracked(String),
 }
 
 #[derive(PartialEq)]

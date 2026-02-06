@@ -7,7 +7,7 @@ use shared::{read_request, send_response, Request, RequestTypes, Response, Respo
 use request_handler_utils::ServerConfig;
 
 pub mod request_handler_utils;
-mod repository_management;
+mod server_repository_management;
 pub struct PhotoServerRequestHandler {
     pub stream:TcpStream,
     pub config:ServerConfig,

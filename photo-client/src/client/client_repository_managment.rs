@@ -1,11 +1,71 @@
 use super::Client;
-use std::{collections::HashMap, sync::{Arc, atomic}};
+use std::{collections::HashMap, sync::mpsc, sync::{Arc, atomic}};
 use shared::{send_request,RequestTypes,ResponseCodes,Tree,
             read_response, Request, Log, Notify};
 use crate::app::{Commands, ConnectionStatus, RepoConfig};
 use serde_json::json;
 
 impl Client {
+
+    fn search_subdir(subdir_path:std::path::PathBuf, tree: &mut Tree, app_tx:&mpsc::Sender<Commands>) -> anyhow::Result<()>{
+        let mut untracked_files = Vec::<String>::new();
+        for entry in std::fs::read_dir(&subdir_path)? {
+            let entry = entry?;
+            let name_os = entry.file_name();
+            let path: std::path::PathBuf = entry.path();
+            let file_type = entry.file_type()?;
+            let name = match name_os.to_str() {
+                Some(name) => name,
+                None => continue
+            };
+            
+            if file_type.is_dir() {
+                if !tree.content.contains_key(name) {
+                    // start tracking this directory
+                    tree.add_history(name.to_string());
+                    tree.apply_history(tree.version);
+                }
+                Self::search_subdir(path, tree, app_tx)?;
+
+            } else if file_type.is_file() {
+                // the tree will never have a file as a key so look in the contents of the tree
+
+                static EMPTY_VEC: &[String] = &[];
+                let parent_name = match subdir_path.file_name().and_then(|os| os.to_str()) {
+                    Some(name) => name,
+                    None => continue, // skip file if parent dir is invalid UTF-8
+                };
+
+                let contents = tree.content.get(parent_name).map(|v: &Vec<String>| &v[..]).unwrap_or(EMPTY_VEC);
+
+                if !contents.iter().any(|s| s == name) {
+                    untracked_files.push(name.to_string());
+                }
+            }
+        }
+        let message = format!("found {} contains {:?}", subdir_path.to_string_lossy(), untracked_files);
+        app_tx.send(Commands::Log(message))?;
+        // send untracked files ..
+        // .. do here 
+        Ok(())
+    }
+
+    pub fn discover_untracked(&mut self, repo_name:String) -> anyhow::Result<()> {
+        let config = match self.config.repo_config.get(&repo_name) {
+            Some(c) => c,
+            None => return Ok(()) // add error
+        };
+
+        let tree = match self.trees.get_mut(&repo_name) {
+            Some(t) => t,
+            None => return Err(anyhow::anyhow!("unable to locate tree for {}", &repo_name))
+        };
+
+        Self::search_subdir(std::path::PathBuf::from(&config.watch_directory), tree, &self.app_tx)?;
+        
+        Ok(())
+    }
+
     pub fn create_repository(&mut self, repo_name:String) -> anyhow::Result<()> {
         if let Some(stream) = self.command_stream.as_mut() {
             let request = Request {

@@ -91,7 +91,6 @@ impl FileStreamServer {
 
         self.stream.read_exact(&mut image_bytes)?;
 
-        let image = image::load_from_memory(&image_bytes)?;
 
         println!("{} is the file dest", file_dest.to_str().unwrap().to_string());
         let image_loc = file_dest.join(file_header.relative_path);
@@ -107,7 +106,7 @@ impl FileStreamServer {
             std::fs::create_dir_all(&image_loc)?;
         }
 
-        image.save(std::path::Path::new(&image_path))?;
+        std::fs::write(&image_path, &image_bytes)?;
         Ok(image_path.to_string_lossy().to_string())
 
     }
