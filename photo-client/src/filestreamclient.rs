@@ -1,25 +1,126 @@
-use std::{path::{Path,PathBuf}, io::{prelude::*, Cursor}, sync::{mpsc,Arc,atomic},
-                time::Duration, net::TcpStream,};
+use std::{io::prelude::*, net::TcpStream, path::{Path,PathBuf}, sync::{Arc, atomic, mpsc}, thread::JoinHandle, time::Duration};
 use bincode::{config, encode_into_slice};
-use image::ImageReader;
 use notify::{Watcher,RecommendedWatcher, RecursiveMode, EventKind};
-use shared::{read_response, Response, Log, Notify, FileHeader};
+use shared::{read_response, FileHeader, Job, BatchJob};
+use std::{fs, thread::sleep};
+
 use crate::app::{Commands};
 
-pub struct FileStreamClient {
-    stream:TcpStream,
+pub struct RepoEventListener {
+    repo_name: String,
     watch_directory:String,
-    pub app_tx:mpsc::Sender<Commands>,
+    batch_job_tx:mpsc::Sender<BatchJob>,
     stop_flag:Arc<atomic::AtomicBool>,
     track_modifications:bool,
 }
 
-impl FileStreamClient {
-    pub fn new(stream:TcpStream, watch_directory:String, app_tx:mpsc::Sender<Commands>, stop_flag: Arc<atomic::AtomicBool>, track_modifications:bool) -> Self {
-        FileStreamClient { 
-            stream,
+
+pub struct BatchLoader {
+    stream:Option<TcpStream>, // communicates with the server
+    stop_flag: Option<Arc<atomic::AtomicBool>>,
+    rx: Option<mpsc::Receiver<BatchJob>>,
+    pub tx: mpsc::Sender<BatchJob>,
+    pub app_tx:Option<mpsc::Sender<Commands>>,
+}
+
+impl BatchLoader {
+    pub fn new(stream:TcpStream, stop_flag: Arc<atomic::AtomicBool>, app_tx:mpsc::Sender<Commands>) -> Self {
+        let (tx, rx) = mpsc::channel::<BatchJob>();
+        BatchLoader { 
+            stream: Some(stream),
+            stop_flag: Some(stop_flag),
+            rx: Some(rx)
+            ,tx,
+            app_tx: Some(app_tx),
+        }
+    }
+
+    pub fn listen(&mut self) -> anyhow::Result<(mpsc::Sender<BatchJob>, JoinHandle<anyhow::Result<()>>)>{
+        
+        if let Some(stream) = &mut self.stream {
+            stream.flush()?;
+        }
+
+        let rx = self.rx.take().expect("batch job receiver not set");
+        let stop_flag = self.stop_flag.take().expect("stop flag not given");
+        let mut stream = self.stream.take().expect("stream not given");
+        let app_tx = self.app_tx.take().expect("app tx not given");
+        let join_handle:JoinHandle<anyhow::Result<()>> = std::thread::spawn(move || {
+            while !stop_flag.load(atomic::Ordering::Relaxed) {
+                match rx.try_recv() {
+                    Ok(batch_job) => {
+                        let chunk_size = 1024 * 1024 * 8;
+
+                        let batch_size = batch_job.jobs.len() as u32;
+                        println!("batch size {}", batch_size);
+                        stream.write_all(&batch_size.to_be_bytes())?;
+
+                        for job in batch_job.jobs {
+                            println!("Sending job {}: {} bytes (expected: {} bytes)", 
+                                job.file_header.file_name, 
+                                job.data.len(),
+                                job.file_header.file_size);
+                            let mut header_bytes = vec![0u8;1024];
+                            let header_size = encode_into_slice(&job.file_header, &mut header_bytes, config::standard())? as u32;
+                            header_bytes.truncate(header_size as usize);
+                            println!("header size {}", header_size);
+                            stream.write_all(&header_size.to_be_bytes())?;
+                            stream.flush()?;
+                            stream.write_all(&header_bytes)?;
+                            stream.flush()?;
+                            let mut remaining = &job.data[..];
+
+                            while !remaining.is_empty() {
+                                let take = std::cmp::min(remaining.len(), chunk_size);
+                                let chunk = &remaining[..take];
+                                println!("Sending chunk: {} bytes", chunk.len());
+                                stream.write_all(&(take as u32).to_be_bytes())?;
+                                stream.flush()?;
+                                stream.write_all(&chunk)?;
+                                stream.flush()?;
+                                remaining = &remaining[take..];
+                            }
+                            println!("Finished sending job {}", job.file_header.file_name);
+                            stream.write_all(&0u32.to_be_bytes())?;
+                        }
+
+                        println!("Submitted Batch job");
+
+                        let response = read_response(&mut stream)?;
+                        let response_message: std::borrow::Cow<'_, str> = String::from_utf8_lossy(&response.body);
+                        app_tx.send(Commands::Notify(format!("{}", response_message)))?;
+                        app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message)))?;
+
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {},
+                    Err(e) => return Err(anyhow::anyhow!(e))
+                }
+            }
+
+            stream.shutdown(std::net::Shutdown::Both).ok();
+            let message = "Streaming client stopped.".to_string();
+            app_tx.send(Commands::Log(message.clone()))?;
+            app_tx.send(Commands::Notify(message.clone()))?;
+
+            Ok(())
+        });
+
+
+        Ok((self.tx.clone(), join_handle))
+    }
+}
+
+impl RepoEventListener {
+    pub fn new(
+            repo_name: String,
+            watch_directory:String,
+            batch_job_tx:mpsc::Sender<BatchJob>,
+            stop_flag: Arc<atomic::AtomicBool>,
+            track_modifications:bool) -> Self {
+        RepoEventListener {
+            repo_name,
             watch_directory,
-            app_tx,
+            batch_job_tx,
             stop_flag,
             track_modifications,
         }
@@ -45,7 +146,6 @@ impl FileStreamClient {
             return Err(anyhow::anyhow!("Failed to watch directory: {} {}",self.watch_directory, e));
         }
 
-
         while !self.stop_flag.load(atomic::Ordering::Relaxed) {
             match wrx.try_recv() {
                 Ok(event) => {
@@ -58,20 +158,33 @@ impl FileStreamClient {
                     };
                     if let EventKind::Create(notify::event::CreateKind::File) = new_event.kind {
                         for path in new_event.paths.clone() {
-                            if let Err(e) = self.upload_file(path) {
+
+                            let file_ext = path.extension()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("unknown");
+                            if file_ext == "part" {
+                                continue
+                            }
+                            
+                            loop {
+                                match is_file_stable(&path, 100, 10) {
+                                    Ok(true) => break, // File is stable, exit loop
+                                    Ok(false) => {
+                                        // File not stable yet, wait and try again
+                                        std::thread::sleep(Duration::from_millis(1000));
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error checking file: {:?}", e);
+                                        // Decide whether to continue or break
+                                        break; // or return an error
+                                    }
+                                }
+                            }
+                            if let Err(e) = self.submit_job(path, self.repo_name.clone()) {
                                 eprintln!("Failed to send image: {}", e);
                                 break;
                             };
-                        }
-                    }
-                    if self.track_modifications {
-                        if let EventKind::Modify(notify::event::ModifyKind::Any) = new_event.kind {
-                            for path in new_event.paths {
-                                if let Err(e) = self.upload_file(path) {
-                                    eprintln!("Failed to send image: {}", e);
-                                    break;
-                                };
-                            }
                         }
                     }
                 },
@@ -84,16 +197,10 @@ impl FileStreamClient {
                 }
             }
         }
-
-        self.stream.shutdown(std::net::Shutdown::Both).ok();
-        let message = "Streaming client stopped.".to_string();
-        self.app_tx.send(Commands::Log(message.clone()))?;
-        self.app_tx.send(Commands::Notify(message.clone()))?;
-
         Ok(())
     }
 
-    fn upload_file(&mut self, local_path:PathBuf) -> anyhow::Result<()> { 
+    fn prepare_job(&self, local_path:PathBuf, repo_name: String) -> anyhow::Result<BatchJob> {
         if !local_path.exists() {
             return Err(anyhow::anyhow!("File not found"));
         }
@@ -101,7 +208,7 @@ impl FileStreamClient {
         let mut last_size = 0;
         loop {
             if self.stop_flag.load(atomic::Ordering::Relaxed) {
-                return Ok(())
+                return Err(anyhow::anyhow!("Job cancelled"));
             }
             let metadata = std::fs::metadata(&local_path)?;
             let current_size = metadata.len();
@@ -118,87 +225,56 @@ impl FileStreamClient {
         let file_ext = local_path.extension()
             .and_then(|s| s.to_str())
             .unwrap_or("unknown");
+
         let file_datetime = local_path.metadata()?.created()?;
-        let mut image_bytes: Vec<u8> = Vec::new();
-        if ["png,jpg,jpeg,gif"].contains(&file_ext) {
-            let image = ImageReader::open(local_path.clone())?.decode().expect("unable to decode image");
 
-            match file_ext {
-                "png" => {
-                image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Png)
-                    .expect("Failed to write PNG image");
-                },
-                "jpg" | "jpeg" => {
-                    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Jpeg)
-                    .expect("Failed to write JPEG image");
-                },
+        println!("local path {}\n", local_path.clone().to_string_lossy());
 
-                "gif" => {
-                    image.write_to(&mut Cursor::new(&mut image_bytes), image::ImageFormat::Gif)
-                    .expect("Failed to write GIF image");
-                }
-                _ => return Err(anyhow::anyhow!("Unsupported image format")), // maybe fix this
-            }
-        } else {
-            image_bytes = std::fs::read(local_path.clone())?;
-        }
+        let file_bytes: Vec<u8> = std::fs::read(local_path.clone())?;
 
-        let repo_root = Path::new(&self.watch_directory);
-        let relative_path = match local_path.strip_prefix(repo_root) {
-            Ok(path) => {
-                let parent_path = match path.parent().unwrap_or_else(|| Path::new("")).to_str() {
-                    Some(p) => p.to_string(),
-                    None => return Err(anyhow::anyhow!("Failed to get relative path")),
-                };
-                parent_path
-            },
-            Err(_) => return Err(anyhow::anyhow!("File is outside of repository root")),
-        };
         let file_header = FileHeader {
+            repo_name: repo_name,
             file_name: file_name.to_string(), 
-            relative_path: relative_path,
-            file_size: image_bytes.len() as u64,
+            file_size: file_bytes.len() as usize,
             file_ext: file_ext.to_string(),
             file_datetime: file_datetime,
         };
 
-        let mut header_bytes = vec![0u8; 1024];
-        let header_size = encode_into_slice(&file_header, &mut header_bytes[..], config::standard())
-        .expect("Failed to serialize file header") as u32;
+        println!("File size: {} bytes", file_bytes.len());
 
-        header_bytes.truncate(header_size as usize);
-        println!("Header size: {}", header_size);
-            
-        println!("Image size: {}", image_bytes.len());
+        // a singleton job
+        let job = Job {
+            file_header: file_header,
+            data: file_bytes,
+        };
 
-        // write to the stream
-        self.stream.write_all(&header_size.to_be_bytes())?;
-        self.stream.write_all(&header_bytes)?;
-        self.stream.write_all(&image_bytes)?;
+        Ok(BatchJob::new(vec![job]))
+    }
 
-        println!("Sent file: {} ({} bytes)",file_header.file_name, file_header.file_size);
-
-        let response = read_response(&mut self.stream)?;
-        self.log_response(&response)?;
-        self.notify_app(&response)?;
-
+    fn submit_job(&mut self, local_path:PathBuf, repo_name:String) -> anyhow::Result<()> {
+        let batch_job = self.prepare_job(local_path, repo_name)?;
+        self.batch_job_tx.send(batch_job)?;
         Ok(())
     }
 }
 
-impl Notify for FileStreamClient {
-    fn notify_app(&self, response:&Response) -> anyhow::Result<()> {   
-        let response_message = String::from_utf8_lossy(&response.body);
-        let _ = self.app_tx.send(Commands::Notify(format!("{}", response_message)))?;
-        Ok(())
+fn is_file_stable(path: &Path, check_interval_ms: u64, stability_checks: u32) -> anyhow::Result<bool> {
+    let mut previous_size = match fs::metadata(path).map(|m| m.len()) {
+        Ok(size) => size,
+        Err(_) => return Ok(false),
+    };
+    
+    for _ in 0..stability_checks {
+        sleep(Duration::from_millis(check_interval_ms));
+        let current_size = match fs::metadata(path).map(|m| m.len()) {
+            Ok(size) => size,
+            Err(_) => return Ok(false),
+        };
+        
+        if current_size != previous_size {
+            return Ok(false);
+        }
+        previous_size = current_size;
     }
-}
-
-impl Log for FileStreamClient {
-    fn log_response(&self, response:&Response) -> anyhow::Result<()> {   
-        let response_message = String::from_utf8_lossy(&response.body);
-        let _ = self.app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message)))?;
-        Ok(())
-    }
-
+    Ok(true)
 }

@@ -1,63 +1,59 @@
 use std::{
-    io::{prelude::*}, net::{TcpListener, TcpStream}, thread::{JoinHandle},
-    path::Path, sync::{Arc, atomic}
+    collections::HashMap, fs::File, io::prelude::*, net::{TcpListener, TcpStream}, path::{Path, PathBuf}, sync::{Arc, atomic}, thread::JoinHandle
 };
 use::bincode::{config};
-use shared::{send_response, Response, Tree, FileHeader};
+use shared::{send_response, Response, Tree, FileHeader, Job};
 
-pub fn initiate_file_streaming_server(repo_name:String, storage_directory: String, listener:TcpListener, stop_flag:Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>>{   
+pub fn initiate_batch_processor(storage_directory: PathBuf, listener:TcpListener, stop_flag:Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>>{   
     match listener.accept() {
-        Ok((mut file_stream, socket_addr)) => {
+        Ok((mut file_stream, _)) => {
             
             let response: Response = Response {
                 status_code:shared::ResponseCodes::OK,
                 status_message:"OK".to_string(),
-                body: format!("{} Connected to repository {}", socket_addr, repo_name).as_bytes().to_vec(),
+                body: "Created batch processor".as_bytes().to_vec(),
             };
 
             send_response(response, &mut file_stream)?;
 
-            // move the file stream to its own thread
             return Ok(std::thread::spawn(move || {
                 println!("file stream thread initiated");
                 
-                let mut file_stream_server = FileStreamServer::new(repo_name, storage_directory, file_stream, stop_flag);
-                let repo_path = Path::new(&file_stream_server.storage_directory).join(&file_stream_server.repo_name);
-
-                file_stream_server.run(repo_path.as_path());
+                let mut file_stream_server = BatchProcessor::new(storage_directory, file_stream, stop_flag);
+                file_stream_server.listen();
             }));
         },
         Err(e) => return Err(anyhow::anyhow!(e)),
     }
 }
 
-struct FileStreamServer {
-    repo_name: String,
-    storage_directory: String,
+struct BatchProcessor {
+    storage_directory: PathBuf,
     stream:TcpStream,
     stop_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    tree:Tree,
+    trees:HashMap<String, Tree>,
 }
 
-impl FileStreamServer {
-    pub fn new(repo_name:String,storage_directory: String, stream:TcpStream, stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self{
-        FileStreamServer {
-            repo_name:repo_name.clone(),
+impl BatchProcessor {
+    pub fn new(storage_directory: PathBuf, stream:TcpStream, stop_flag:std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self{
+        BatchProcessor {
             storage_directory,
             stream,
             stop_flag,
-            tree: Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()),
+            trees: HashMap::new(),
         }
     }
 
-    pub fn run(&mut self, file_dest: &Path) {
+    pub fn listen(&mut self) -> anyhow::Result<()> {
+
+
         while !self.stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            match self.upload_file(file_dest) {
-                Ok(file_name) => {
+            match self.process_batch_job() {
+                Ok(_) => {
                     let response = Response {
                         status_code:shared::ResponseCodes::OK,
                         status_message: "OK".to_string(),
-                        body: format!("received {:?}", file_name).as_bytes().to_vec(),
+                        body: format!("processed batch job").as_bytes().to_vec(),
                     };
                     
                     if let Err(e) = send_response(response, &mut self.stream) {
@@ -66,49 +62,87 @@ impl FileStreamServer {
                     }
                 }
                 Err(e) => {
-                    println!("Connection closed or error: {}", e);
+                    if e.to_string().contains("UnexpectedEnd") || 
+                    e.to_string().contains("EOF") {
+                        println!("Connection closed by client");
+                    } else {
+                        println!("Connection error: {}", e);
+                    }
                     break;
                 }
             }
         }
+        Ok(())
     }
 
-    fn upload_file(&mut self, file_dest: &Path) -> anyhow::Result<String, anyhow::Error> {
-        let mut header_length_buffer = [0u8; 4];
-        // Read the request line
-
-        self.stream.read_exact(&mut header_length_buffer)?;
-
-        let header_length = u32::from_be_bytes(header_length_buffer);
-        println!("Header length: {}", header_length);
-        let mut header_bytes = vec![0u8; header_length as usize];
-
-        self.stream.read_exact(&mut header_bytes)?;
+    fn process_batch_job(&mut self) -> anyhow::Result<()> {
+        let mut batch_header_length_buffer = [0u8; 4];
         
-        let (file_header, _): (FileHeader, _) = bincode::decode_from_slice(&header_bytes, config::standard())?;
+        self.stream.read_exact(&mut batch_header_length_buffer)?;
 
-        let mut image_bytes = vec![0u8; file_header.file_size as usize];
+        let batch_num_jobs: u32 = u32::from_be_bytes(batch_header_length_buffer);
+        let mut jobs = Vec::<Job>::new();
 
-        self.stream.read_exact(&mut image_bytes)?;
+        println!("Expecting {} jobs", batch_num_jobs);
+        for i in 0..batch_num_jobs {
+            println!("Processing job {}/{}", i+1, batch_num_jobs);
+            let mut header_size_buf = [0u8; 4];
+            self.stream.read_exact(&mut header_size_buf)?;
+            let header_size = u32::from_be_bytes(header_size_buf) as usize;
 
-        let image = image::load_from_memory(&image_bytes)?;
+            let mut header_bytes = vec![0u8; header_size];
+            println!("header bytes {}", header_size);
+            self.stream.read_exact(&mut header_bytes)?;
+            let (file_header, _):(FileHeader, usize) = bincode::decode_from_slice(&header_bytes, bincode::config::standard())?;
 
-        println!("{} is the file dest", file_dest.to_str().unwrap().to_string());
-        let image_loc = file_dest.join(file_header.relative_path);
-        let image_path = image_loc.join(file_header.file_name);
+            let mut job_data_bytes = vec![0u8,file_header.file_size as u8];
 
-        self.tree.add_history( format!("+{}", image_path.to_str().unwrap().to_string()));
-        self.tree.apply_history(self.tree.version);
-        self.tree.save_to_file(&self.tree.path);
+                
+            loop {
+                let mut chunk_size_buf = [0u8; 4];
+                self.stream.read_exact(&mut chunk_size_buf)?;
+                let chunk_size = u32::from_be_bytes(chunk_size_buf) as usize;
+                if chunk_size == 0 { break; }
 
-        println!("Receiving file: {} ({} bytes)", image_path.to_str().unwrap().to_string(), file_header.file_size);
+                let mut chunk = vec![0u8; chunk_size];
+                self.stream.read_exact(&mut chunk)?;
+                job_data_bytes.extend_from_slice(&chunk);
 
-        if std::path::Path::new(&image_loc).exists() == false {
-            std::fs::create_dir_all(&image_loc)?;
+                println!("Read {} bytes for job (expected: {} bytes)", 
+                job_data_bytes.len(),
+                file_header.file_size);
+            }
+
+            jobs.push(Job {file_header: file_header, data: job_data_bytes});
         }
+        println!("finished reading batch job");
 
-        image.save(std::path::Path::new(&image_path))?;
-        Ok(image_path.to_string_lossy().to_string())
+        for job in jobs {
+            let file_header = job.file_header;
+            let file_path = self.storage_directory.join(&file_header.repo_name).join(file_header.file_name);
+            println!("{} is the file dest", file_path.to_str().unwrap().to_string());
 
+            if !self.trees.contains_key(&file_header.repo_name) {
+                let tree_path = PathBuf::from("trees").join(format!("{}.tree", &file_header.repo_name));
+                let tree = Tree::load_from_file(tree_path.to_string_lossy().as_ref());
+                self.trees.insert(file_header.repo_name.clone(), tree);
+            }
+            
+            if let Some(tree) = self.trees.get_mut(&file_header.repo_name) {
+                tree.add_history( format!("+{}", file_path.to_str().unwrap().to_string()));
+                tree.apply_history(tree.version);
+                tree.save_to_file(&tree.path);
+            }
+
+
+            println!("Receiving file: {} ({} bytes)", file_path.to_str().unwrap().to_string(), file_header.file_size);
+
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&file_path, &job.data)?;
+
+        }
+        Ok(())
     }
 }
