@@ -1,36 +1,37 @@
 use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream, sync::Arc, sync::atomic};
-use shared::{send_request,RequestTypes,Response,ResponseCodes,Tree,
-            read_response, Request, Log, Notify};
+use shared::{BatchJob, Log, Notify, Request, RequestTypes, Response, ResponseCodes, Tree, read_response, send_request};
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
-use crate::filestreamclient::FileStreamClient;
+use crate::filestreamclient::{BatchLoader, RepoEventListener};
 
 mod client_repository_managment;
 
 pub struct Client {
     pub app_tx: mpsc::Sender<Commands>,
-    rx: mpsc::Receiver<Commands>,
+    app_rx: mpsc::Receiver<Commands>,
     stop_flag: Arc<atomic::AtomicBool>,
     config: ClientConfig,
     command_stream: Option<TcpStream>,
     repo_threads: HashMap<String, (std::thread::JoinHandle<()>,Arc<atomic::AtomicBool>)>,
+    batch_loader_tx: Option<mpsc::Sender<BatchJob>>,
+    batch_loader_join_handle: Option<JoinHandle<anyhow::Result<()>>>,
     trees: HashMap<String,Tree>
 }
 
 impl Client {
-    pub fn new(app_tx: mpsc::Sender<Commands>,rx:mpsc::Receiver<Commands>,stop_flag:Arc<atomic::AtomicBool>, config:ClientConfig) -> Self {
-
+    pub fn new(app_tx: mpsc::Sender<Commands>,app_rx:mpsc::Receiver<Commands>,stop_flag:Arc<atomic::AtomicBool>, config:ClientConfig) -> Self {
         Client {
-            app_tx,
-            rx, 
+            app_tx, app_rx,
             stop_flag,
             config: config,
             command_stream: None,
             repo_threads: HashMap::new(),
-            trees: HashMap::new()
+            trees: HashMap::new(),
+            batch_loader_tx: None,
+            batch_loader_join_handle: None,
         }
     }
 
-    pub fn connect(&mut self) -> anyhow::Result<()> {
+    pub fn connect(&mut self) -> anyhow::Result<()> { // returns a join handle for the batch loader
         match TcpStream::connect(self.config.server_address.as_str()) {
             Ok(s) => {
                 if std::path::Path::new("photo-client/trees").exists() == false {
@@ -46,17 +47,54 @@ impl Client {
                     self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Connected))?;
                 }
 
+                // dispatch batch loader
+                if let Some(stream) = &mut self.command_stream {
+                    let request = Request {
+                        request_type: RequestTypes::StartBatchProcessor,
+                        body: vec![],
+                    };
+
+                    send_request(request, stream)?;
+
+                    let response = read_response(stream)?;
+                    self.log_response(&response)?;
+                    self.notify_app(&response)?;
+
+                    let file_streaming_service = String::from_utf8_lossy(&response.body).to_string();
+                    let mut file_stream = TcpStream::connect(file_streaming_service)?;
+
+                    // handshake to confirm connection .. blocking
+                    let response = read_response(&mut file_stream)?;
+                    self.log_response(&response)?;
+                    self.notify_app(&response)?;
+                    
+                    let app_tx_clone = self.app_tx.clone();
+                    let stop_flag_clone = self.stop_flag.clone();
+                    
+                    let mut batch_loader = BatchLoader::new(file_stream, stop_flag_clone, app_tx_clone);
+
+                    (self.batch_loader_tx, self.batch_loader_join_handle) = match batch_loader.listen() {
+                        Ok((tx, join_handle)) => (Some(tx),Some(join_handle)),
+                        Err(_) => (None,None)
+                    };
+                }
+
                 if !self.config.server_storage_directory.is_empty() {
                     self.get_repositories()?
                 }
 
+                // auto discover untracked
+                for repo_name in self.config.repo_config.keys().cloned().collect::<Vec<_>>() {
+                    self.discover_untracked(repo_name.to_string())?;
+                }
+
                 // listen to the app for commands
                 self.app_request_handler()?;
-
+                
                 // kill all repo connections
                 let repo_list = self.repo_threads.keys().cloned().collect::<Vec<_>>();
-                for repo in repo_list {
-                    self.disconnect_repository(&repo)?;
+                for repo_name in repo_list {
+                    self.disconnect_repository(&repo_name)?;
                 }
 
                 // kill the client
@@ -65,6 +103,8 @@ impl Client {
                 }
                 self.app_tx.send(Commands::UpdateConnectionStatus(ConnectionStatus::Disconnected))?;
                 self.app_tx.send(Commands::Notify("Client stopped.".to_string()))?;
+
+                
             },
             Err(e) => {
                 self.stop_flag.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -77,16 +117,16 @@ impl Client {
     }
     fn app_request_handler(&mut self) -> anyhow::Result<()> {
         while !self.stop_flag.load(atomic::Ordering::Relaxed) {
-            match self.rx.try_recv() {
+            match self.app_rx.try_recv() {
                 Ok(new_command) => {
                     match new_command {
                         Commands::DiscoverUntracked(repo_name) => self.discover_untracked(repo_name)?,
                         Commands::CreateRepo(msg) => self.create_repository(msg.to_string())?,
                         Commands::GetRepoTree(repo_name) => self.get_repo_tree(repo_name)?,
                         Commands::SetStoragePath(storage_directory) => self.set_storage_path(storage_directory)?,
-                        Commands::StartStream(repo_name, watch_directory) => {
+                        Commands::StartEventListener(repo_name, watch_directory) => {
                             let stop_flag = std::sync::Arc::new(atomic::AtomicBool::new(false));
-                            let file_streaming_client_handle = self.start_stream(repo_name.to_string(), watch_directory, stop_flag.clone())?;
+                            let file_streaming_client_handle = self.start_event_listener(repo_name.to_string(), watch_directory, stop_flag.clone())?;
                             self.repo_threads.insert(repo_name, (file_streaming_client_handle, stop_flag));
                         }
                         Commands::DisconnectStream(repo) => self.disconnect_repository(&repo)?,
@@ -129,49 +169,20 @@ impl Client {
         Ok(())
     }
     
-    fn start_stream(&mut self, repo:String, watch_directory:String, stop_flag: Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>> {
-        if let Some(stream) = self.command_stream.as_mut() {
-            let request = Request {
-                request_type: RequestTypes::StartStream,
-                body: repo.as_bytes().to_vec(), // implement security stuff here
-            };
-
-            send_request(request, stream)?;
-
-            let response = read_response(stream)?;
-            self.log_response(&response)?;
-            self.notify_app(&response)?;
-
-            let file_streaming_service = String::from_utf8_lossy(&response.body).to_string();
-            let mut file_stream = TcpStream::connect(file_streaming_service)?;
-
-            // handshake to confirm connection .. blocking
-            let response = read_response(&mut file_stream)?;
-            self.log_response(&response)?;
-            self.notify_app(&response)?;
-
-            let new_status = match response.status_code {
-                ResponseCodes::OK => ConnectionStatus::Connected,
-                _ => ConnectionStatus::Disconnected,
-            };
-
-            self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
-
-            let mut track_mods = false;
-            if let Some(repoconfig) = self.config.repo_config.get(&repo) {
-                track_mods = repoconfig.track_modifications;
-            };
-            let track_mods_clone = track_mods.clone();
-            // run the file streaming channel on a seperate thread
-            let app_tx_clone = self.app_tx.clone();
-            return Ok(std::thread::spawn(move || {
-                let mut file_stream_client = FileStreamClient::new(file_stream, watch_directory, app_tx_clone, stop_flag, track_mods_clone);
+    fn start_event_listener(&mut self, repo_name:String, watch_directory:String, stop_flag: Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>> {
+        if let (Some(batch_loader_tx), Some(repo_config)) = (self.batch_loader_tx.clone(), self.config.repo_config.get(&repo_name)) {
+            let track_modifications = repo_config.track_modifications.clone();
+            let repo_name_clone = repo_name.clone();
+            let join_handle = std::thread::spawn(move || {
+                let mut file_stream_client = RepoEventListener::new(repo_name_clone, watch_directory, batch_loader_tx, stop_flag, track_modifications);
                 if let Err(e) = file_stream_client.run() {
-                    let _ = file_stream_client.app_tx.send(Commands::Log(format!("Error starting streaming channel {}",e)));
+                    eprintln!("event listener failed to run {e:?}")
                 }
-            }));
+            });
+            self.app_tx.send(Commands::UpdateRepoStatus((repo_name,ConnectionStatus::Connected)))?;
+            return Ok(join_handle)
         }
-        Err(anyhow::anyhow!("Main stream is not connected"))
+        Err(anyhow::anyhow!("Batch loader tx not found"))
     }
 
 }

@@ -1,42 +1,43 @@
 use super::Client;
-use std::{collections::HashMap, sync::mpsc, sync::{Arc, atomic}};
-use shared::{send_request,RequestTypes,ResponseCodes,Tree,
-            read_response, Request, Log, Notify};
+use std::{collections::HashMap, path::PathBuf, sync::{Arc, atomic, mpsc}};
+use shared::{FileHeader, Log, Notify, Request, RequestTypes, ResponseCodes, Tree, Job, BatchJob, read_response, send_request};
 use crate::app::{Commands, ConnectionStatus, RepoConfig};
 use serde_json::json;
 
 impl Client {
 
-    fn search_subdir(subdir_path:std::path::PathBuf, tree: &mut Tree, app_tx:&mpsc::Sender<Commands>) -> anyhow::Result<()>{
+    fn search_subdir(subdir_path:PathBuf, tree: &mut Tree, app_tx:&mpsc::Sender<Commands>, batch_loader_tx:&mpsc::Sender<BatchJob>) -> anyhow::Result<()>{
         let mut untracked_files = Vec::<String>::new();
+        println!("subdir path is {}", subdir_path.to_string_lossy());
         for entry in std::fs::read_dir(&subdir_path)? {
             let entry = entry?;
             let name_os = entry.file_name();
-            let path: std::path::PathBuf = entry.path();
+            let path: PathBuf = entry.path();
             let file_type = entry.file_type()?;
             let name = match name_os.to_str() {
                 Some(name) => name,
                 None => continue
             };
-            
+            app_tx.send(Commands::Log(format!("currently in {}", &name)))?;
             if file_type.is_dir() {
                 if !tree.content.contains_key(name) {
                     // start tracking this directory
-                    tree.add_history(name.to_string());
+                    app_tx.send(Commands::Log(format!("tree version is {}", tree.version)))?;
+                    tree.add_history(format!("+{}",path.to_string_lossy()));
                     tree.apply_history(tree.version);
+                    app_tx.send(Commands::Log(format!("updated tree version is {}", tree.version)))?;
                 }
-                Self::search_subdir(path, tree, app_tx)?;
+                Self::search_subdir(path, tree, app_tx, batch_loader_tx)?;
 
             } else if file_type.is_file() {
                 // the tree will never have a file as a key so look in the contents of the tree
 
-                static EMPTY_VEC: &[String] = &[];
                 let parent_name = match subdir_path.file_name().and_then(|os| os.to_str()) {
                     Some(name) => name,
                     None => continue, // skip file if parent dir is invalid UTF-8
                 };
 
-                let contents = tree.content.get(parent_name).map(|v: &Vec<String>| &v[..]).unwrap_or(EMPTY_VEC);
+                let contents = tree.content.get(parent_name).map(|v: &Vec<String>| &v[..]).unwrap_or(&[]);
 
                 if !contents.iter().any(|s| s == name) {
                     untracked_files.push(name.to_string());
@@ -45,8 +46,39 @@ impl Client {
         }
         let message = format!("found {} contains {:?}", subdir_path.to_string_lossy(), untracked_files);
         app_tx.send(Commands::Log(message))?;
-        // send untracked files ..
-        // .. do here 
+
+        let mut jobs = Vec::<Job>::new();
+
+        for file in untracked_files {
+            let file_path = subdir_path.join(&file);
+
+            let repo_name = &tree.name;
+            let metadata = std::fs::metadata(&file_path)?;
+            let file_datetime = metadata.created()?;
+            let file_size= metadata.len();
+            let file_ext = file_path.extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();   
+            
+            let file_header = FileHeader {
+                repo_name: repo_name.to_string(),
+                file_name: file,
+                file_size: file_size as usize,
+                file_ext,
+                file_datetime,
+            };
+
+            let job = Job {
+              file_header,
+              data: std::fs::read(&file_path)? 
+            };
+            jobs.push(job);
+        }
+        
+        let batch_job = BatchJob::new(jobs);
+        batch_loader_tx.send(batch_job)?;
+        
         Ok(())
     }
 
@@ -60,9 +92,12 @@ impl Client {
             Some(t) => t,
             None => return Err(anyhow::anyhow!("unable to locate tree for {}", &repo_name))
         };
+        if let Some(batch_loader_tx) = &self.batch_loader_tx {
+            Self::search_subdir(std::path::PathBuf::from(&config.watch_directory), tree, &self.app_tx, batch_loader_tx)?;
 
-        Self::search_subdir(std::path::PathBuf::from(&config.watch_directory), tree, &self.app_tx)?;
-        
+        } else {
+            return Err(anyhow::anyhow!("batch loader tx is not available"));
+        }
         Ok(())
     }
 
@@ -121,7 +156,7 @@ impl Client {
                 for (repo_name, repo_config) in self.config.repo_config.clone() {
                     if repo_config.auto_connect & self.config.repo_config.contains_key(&repo_name){
                         let stop_flag = Arc::new(atomic::AtomicBool::new(false));
-                        let file_streaming_client_handle = self.start_stream(repo_name.to_string(), repo_config.watch_directory.to_string(), stop_flag.clone())?;
+                        let file_streaming_client_handle = self.start_event_listener(repo_name.to_string(), repo_config.watch_directory.to_string(), stop_flag.clone())?;
                         self.repo_threads.insert(repo_name.clone(), (file_streaming_client_handle, stop_flag));
                     }
                     let tree_path = ("trees".to_string() + "/" + &repo_name + ".tree").to_string();
@@ -149,31 +184,11 @@ impl Client {
                     self.app_tx.send(Commands::Notify(message.clone()))?;
                     return Err(anyhow::anyhow!(message.clone()));
                 }
+                self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),ConnectionStatus::Disconnected)))?;
             },
             None => {
                 self.app_tx.send(Commands::Log(format!("Not connected to {}", repo).to_string()))?;
             }
-        }
-
-        if let Some(stream) = self.command_stream.as_mut() {
-            let request = Request {
-                request_type:RequestTypes::DisconnectStream,
-                body: repo.as_bytes().to_vec(),
-            };
-
-            send_request(request, stream)?;
-
-            let response = read_response(stream)?;
-            self.log_response(&response)?;
-            self.notify_app(&response)?;
-
-            let new_status = match response.status_code {
-                ResponseCodes::OK => ConnectionStatus::Disconnected,
-                _ => ConnectionStatus::Connected,
-            };
-
-            self.app_tx.send(Commands::UpdateRepoStatus((repo.clone(),new_status)))?;
-            
         }
         Ok(())
     }
@@ -189,9 +204,15 @@ impl Client {
             let response = read_response(stream)?;
             self.log_response(&response)?;
         
+            
             if response.status_code == ResponseCodes::OK {
                 self.config.repo_config.remove(repo_name);
                 self.trees.remove(repo_name);
+
+                if let Some(tree) = self.trees.get(&repo_name.clone()) {
+                    std::fs::remove_file(&tree.path)?;
+                }
+
                 self.config.save_to_file("./photo-client-config.json");
                 self.app_tx.send(Commands::RemoveRepository(repo_name.to_string()))?;
             }            

@@ -8,7 +8,7 @@ pub enum Commands {
     SetStoragePath(String),
     PostRepos(Vec<String>),
     UpdateRepoStatus((String, ConnectionStatus)),
-    StartStream(String, String),
+    StartEventListener(String, String),
     DisconnectStream(String),
     UpdateConnectionStatus(ConnectionStatus),
     RemoveRepository(String),

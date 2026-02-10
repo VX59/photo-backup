@@ -8,13 +8,35 @@ use anyhow::Result;
 
 #[derive(Debug, Encode, Decode)]
 pub struct FileHeader {
+    pub repo_name: String,
     pub file_name: String,
-    pub relative_path: String,
-    pub file_size: u64,
+    pub file_size: usize,
     pub file_ext: String,
     pub file_datetime: std::time::SystemTime,
 }
 use std::collections::HashMap;
+
+#[derive(Decode, Encode)]
+pub struct Job {
+    pub file_header:FileHeader,
+    pub data:Vec<u8>
+}
+
+#[derive(Default)]
+pub struct BatchJob {
+    pub jobs:Vec<Job>,
+    pub max_batch_size: usize,
+}
+
+impl BatchJob {
+    pub fn new(jobs:Vec<Job>) -> Self {
+        Self {
+            jobs: jobs,
+            max_batch_size: 128,
+        }
+    }
+}
+
 
 #[derive(Serialize, Deserialize, PartialEq)]
 pub enum ResponseCodes {
@@ -51,10 +73,10 @@ pub enum RequestTypes {
     CreateRepo,
     GetRepos,
     SetStoragePath,
-    StartStream,
-    DisconnectStream,
+    EndBatchProcessor,
     RemoveRepository,
     GetRepoTree,
+    StartBatchProcessor,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -96,7 +96,7 @@ impl App {
                         if ui.button("Connect").clicked() {
                             self.ui.repo_status.insert(repo_name.to_string(), ConnectionStatus::Connecting);
                             if let Some(cli_tx) = &self.cli_tx {
-                                cli_tx.send(Commands::StartStream(repo_name.to_string(), repo_config.watch_directory.to_string())).unwrap();
+                                cli_tx.send(Commands::StartEventListener(repo_name.to_string(), repo_config.watch_directory.to_string())).unwrap();
                             }
                         }
                     }

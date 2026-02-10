@@ -1,7 +1,5 @@
-use std::{collections::HashMap, net::{TcpListener, TcpStream}, sync::{Arc,atomic}};
-use rand::Rng;
+use std::{collections::HashMap, net::{TcpStream}, sync::{Arc,atomic}};
 use serde_json;
-use crate::filestreamserver::{initiate_file_streaming_server};
 use shared::{read_request, send_response, Request, RequestTypes, Response, ResponseCodes, Tree};
 
 use request_handler_utils::ServerConfig;
@@ -11,7 +9,7 @@ mod server_repository_management;
 pub struct PhotoServerRequestHandler {
     pub stream:TcpStream,
     pub config:ServerConfig,
-    pub repo_threads: HashMap<String, (std::thread::JoinHandle<()>, Arc<atomic::AtomicBool>)>,
+    pub batch_processor_context: Option<(std::thread::JoinHandle<()>, Arc<atomic::AtomicBool>)>,
     pub trees:HashMap<String, Tree>
 }
 
@@ -20,7 +18,7 @@ impl PhotoServerRequestHandler {
         PhotoServerRequestHandler {
             stream,
             config: ServerConfig::load_from_file(&config_path),
-            repo_threads: HashMap::new(),
+            batch_processor_context: None,
             trees: HashMap::new(),
         }
     }
@@ -39,8 +37,8 @@ impl PhotoServerRequestHandler {
             match request.request_type {
                 RequestTypes::GetRepos => self.get_repos()?,
                 RequestTypes::CreateRepo => self.create_repo(request)?,
-                RequestTypes::StartStream => self.start_stream(request)?,
-                RequestTypes::DisconnectStream => self.disconnect_stream(request)?,
+                RequestTypes::StartBatchProcessor => self.start_batch_processor()?,
+                RequestTypes::EndBatchProcessor => self.end_batch_processor()?,
                 RequestTypes::RemoveRepository => self.remove_repository(request)?,
                 RequestTypes::GetRepoTree => self.get_repo_tree(request)?,
                 RequestTypes::SetStoragePath => self.set_storage_path(request)?,
@@ -100,44 +98,6 @@ impl PhotoServerRequestHandler {
         }
         
         send_response(response, &mut self.stream)?;
-        Ok(())
-    }
-
-    fn start_stream(&mut self, request:Request) -> anyhow::Result<()> {
-        let repo_name = String::from_utf8_lossy(&request.body)
-            .trim()         // removes leading/trailing whitespace
-            .replace(|c: char| c.is_control(), "_") // replace control chars with _
-            .to_string();                 
-
-        let port = rand::rng().random_range(0..u16::MAX);
-        let file_stream_address = format!("0.0.0.0:{}", port);
-
-        let listener = TcpListener::bind(&file_stream_address)?;
-        
-        let response = Response {
-            status_code:ResponseCodes::OK,
-            status_message: format!("Initiated file stream @ {}", &file_stream_address).to_string(),
-            body: file_stream_address.as_bytes().to_vec(),
-        };
-
-        send_response(response, &mut self.stream)?;
-
-        let stop_flag = Arc::new(atomic::AtomicBool::new(false));
-        match initiate_file_streaming_server(repo_name.clone(), self.config.storage_directory.clone(), listener,stop_flag.clone()) {
-            
-            Ok(handle) => { 
-                self.repo_threads.insert(repo_name.clone(),(handle, stop_flag));
-            },
-            Err(e) => {
-                let response = Response {
-                    status_code:ResponseCodes::InternalError,
-                    status_message:"Err".to_string(),
-                    body: format!("Failed to initiate repository {}", repo_name).as_bytes().to_vec(),
-                };
-                send_response(response, &mut self.stream)?;
-                return Err(anyhow::anyhow!(format!("{}",e)));
-            },
-        };
         Ok(())
     }
 }
