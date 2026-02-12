@@ -83,11 +83,6 @@ impl Client {
                     self.get_repositories()?
                 }
 
-                // auto discover untracked
-                for repo_name in self.config.repo_config.keys().cloned().collect::<Vec<_>>() {
-                    self.discover_untracked(repo_name.to_string())?;
-                }
-
                 // listen to the app for commands
                 self.app_request_handler()?;
                 

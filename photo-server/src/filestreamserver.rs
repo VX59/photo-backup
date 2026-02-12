@@ -1,7 +1,6 @@
 use std::{
-    collections::HashMap, fs::File, io::prelude::*, net::{TcpListener, TcpStream}, path::{Path, PathBuf}, sync::{Arc, atomic}, thread::JoinHandle
+    collections::HashMap,io::prelude::*, net::{TcpListener, TcpStream}, path::PathBuf, sync::{Arc, atomic}, thread::JoinHandle
 };
-use::bincode::{config};
 use shared::{send_response, Response, Tree, FileHeader, Job};
 
 pub fn initiate_batch_processor(storage_directory: PathBuf, listener:TcpListener, stop_flag:Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>>{   
@@ -20,7 +19,10 @@ pub fn initiate_batch_processor(storage_directory: PathBuf, listener:TcpListener
                 println!("file stream thread initiated");
                 
                 let mut file_stream_server = BatchProcessor::new(storage_directory, file_stream, stop_flag);
-                file_stream_server.listen();
+                match file_stream_server.listen() {
+                    Ok(_) => {} // handle result
+                    Err(e) => println!("{}",e)
+                };
             }));
         },
         Err(e) => return Err(anyhow::anyhow!(e)),
@@ -83,15 +85,12 @@ impl BatchProcessor {
         let batch_num_jobs: u32 = u32::from_be_bytes(batch_header_length_buffer);
         let mut jobs = Vec::<Job>::new();
 
-        println!("Expecting {} jobs", batch_num_jobs);
         for i in 0..batch_num_jobs {
-            println!("Processing job {}/{}", i+1, batch_num_jobs);
             let mut header_size_buf = [0u8; 4];
             self.stream.read_exact(&mut header_size_buf)?;
             let header_size = u32::from_be_bytes(header_size_buf) as usize;
 
             let mut header_bytes = vec![0u8; header_size];
-            println!("header bytes {}", header_size);
             self.stream.read_exact(&mut header_bytes)?;
             let (file_header, _):(FileHeader, usize) = bincode::decode_from_slice(&header_bytes, bincode::config::standard())?;
 
@@ -107,20 +106,14 @@ impl BatchProcessor {
                 let mut chunk = vec![0u8; chunk_size];
                 self.stream.read_exact(&mut chunk)?;
                 job_data_bytes.extend_from_slice(&chunk);
-
-                println!("Read {} bytes for job (expected: {} bytes)", 
-                job_data_bytes.len(),
-                file_header.file_size);
             }
 
             jobs.push(Job {file_header: file_header, data: job_data_bytes});
         }
-        println!("finished reading batch job");
 
         for job in jobs {
             let file_header = job.file_header;
             let file_path = self.storage_directory.join(&file_header.repo_name).join(file_header.file_name);
-            println!("{} is the file dest", file_path.to_str().unwrap().to_string());
 
             if !self.trees.contains_key(&file_header.repo_name) {
                 let tree_path = PathBuf::from("trees").join(format!("{}.tree", &file_header.repo_name));
@@ -129,11 +122,10 @@ impl BatchProcessor {
             }
             
             if let Some(tree) = self.trees.get_mut(&file_header.repo_name) {
-                tree.add_history( format!("+{}", file_path.to_str().unwrap().to_string()));
-                tree.apply_history(tree.version);
+                let start_index = tree.add_history( format!("+{}", file_path.to_str().unwrap().to_string()));
+                tree.apply_history(start_index);
                 tree.save_to_file(&tree.path);
             }
-
 
             println!("Receiving file: {} ({} bytes)", file_path.to_str().unwrap().to_string(), file_header.file_size);
 
@@ -142,7 +134,7 @@ impl BatchProcessor {
             }
             std::fs::write(&file_path, &job.data)?;
 
-        }
+        } 
         Ok(())
     }
 }

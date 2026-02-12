@@ -49,42 +49,28 @@ impl BatchLoader {
             while !stop_flag.load(atomic::Ordering::Relaxed) {
                 match rx.try_recv() {
                     Ok(batch_job) => {
-                        let chunk_size = 1024 * 1024 * 8;
+                        let chunk_size = 1024 * 1024 * 1;
 
                         let batch_size = batch_job.jobs.len() as u32;
-                        println!("batch size {}", batch_size);
                         stream.write_all(&batch_size.to_be_bytes())?;
 
                         for job in batch_job.jobs {
-                            println!("Sending job {}: {} bytes (expected: {} bytes)", 
-                                job.file_header.file_name, 
-                                job.data.len(),
-                                job.file_header.file_size);
                             let mut header_bytes = vec![0u8;1024];
                             let header_size = encode_into_slice(&job.file_header, &mut header_bytes, config::standard())? as u32;
                             header_bytes.truncate(header_size as usize);
-                            println!("header size {}", header_size);
                             stream.write_all(&header_size.to_be_bytes())?;
-                            stream.flush()?;
                             stream.write_all(&header_bytes)?;
-                            stream.flush()?;
                             let mut remaining = &job.data[..];
 
                             while !remaining.is_empty() {
                                 let take = std::cmp::min(remaining.len(), chunk_size);
                                 let chunk = &remaining[..take];
-                                println!("Sending chunk: {} bytes", chunk.len());
                                 stream.write_all(&(take as u32).to_be_bytes())?;
-                                stream.flush()?;
                                 stream.write_all(&chunk)?;
-                                stream.flush()?;
                                 remaining = &remaining[take..];
                             }
-                            println!("Finished sending job {}", job.file_header.file_name);
                             stream.write_all(&0u32.to_be_bytes())?;
                         }
-
-                        println!("Submitted Batch job");
 
                         let response = read_response(&mut stream)?;
                         let response_message: std::borrow::Cow<'_, str> = String::from_utf8_lossy(&response.body);

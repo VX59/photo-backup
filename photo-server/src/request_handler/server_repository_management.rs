@@ -62,7 +62,7 @@ impl PhotoServerRequestHandler {
             // save it to the config
             self.config.add_repo(repo_name.clone());
             self.config.save_to_file(&self.config.config_path);
-            
+
             // load a tree
             let tree:Tree = Tree {
                 version: 0,
@@ -91,22 +91,22 @@ impl PhotoServerRequestHandler {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let version = body.get("version")
+        let client_version = body.get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as i32;
 
         let response: Response;
         //update the tree from the disk because the file streaming server has a different tree that is at least as up to date as this one
-        self.trees.insert(repo_name.clone(), Tree::load_from_file(&("trees".to_string() + "/" + &repo_name + ".tree").to_string()));
+        // this needs to be fixed later, reading from the disk is slow
+        let tree_path = &("trees".to_string() + "/" + &repo_name + ".tree").to_string();
+        self.trees.insert(repo_name.clone(), Tree::load_from_file(tree_path));
+
         if let Some(tree) = self.trees.get(&repo_name) {
-            if tree.version > version {
+            println!("retrieving updates from {} to {}", client_version, tree.version);
+            if tree.version > client_version {
                 let updates = tree.history.iter()
                     .filter(|(v, _)| {
-                        if version > 0 {
-                            *v > &version
-                        } else {
-                            *v >= &version
-                        }
+                        *v >= &client_version
                         })
                     .map(|(&v, entry)| (v, entry.clone()))
                     .collect::<HashMap<i32, String>>();

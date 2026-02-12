@@ -151,8 +151,7 @@ impl Tree {
         }   
     }
     
-    pub fn apply_history(&mut self, history_index:i32) {
-        let start_index = history_index-self.version;
+    pub fn apply_history(&mut self, start_index:i32) {
         for i in start_index..=self.version{
             if let Some(path_str) = self.history.get(&(i as i32)) {
                 let path: Vec<&str> =   path_str.split('/').skip(2).collect();
@@ -170,9 +169,10 @@ impl Tree {
         }
     }
 
-    pub fn add_history(&mut self, new_entry:String) {
+    pub fn add_history(&mut self, new_entry:String) -> i32 {
         self.history.insert(self.version, new_entry);
         self.version += 1;
+        self.version - 1
     }
 }
 

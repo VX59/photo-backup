@@ -22,10 +22,7 @@ impl Client {
             if file_type.is_dir() {
                 if !tree.content.contains_key(name) {
                     // start tracking this directory
-                    app_tx.send(Commands::Log(format!("tree version is {}", tree.version)))?;
-                    tree.add_history(format!("+{}",path.to_string_lossy()));
-                    tree.apply_history(tree.version);
-                    app_tx.send(Commands::Log(format!("updated tree version is {}", tree.version)))?;
+                    tree.content.insert(name.to_string(), Vec::<String>::new());
                 }
                 Self::search_subdir(path, tree, app_tx, batch_loader_tx)?;
 
@@ -75,26 +72,28 @@ impl Client {
             };
             jobs.push(job);
         }
-        
-        let batch_job = BatchJob::new(jobs);
-        batch_loader_tx.send(batch_job)?;
-        
+        if !jobs.is_empty() {
+            let batch_job = BatchJob::new(jobs);
+            batch_loader_tx.send(batch_job)?;
+        }
         Ok(())
     }
 
     pub fn discover_untracked(&mut self, repo_name:String) -> anyhow::Result<()> {
-        let config = match self.config.repo_config.get(&repo_name) {
-            Some(c) => c,
+        let watch_directory = match self.config.repo_config.get(&repo_name) {
+            Some(c) => std::path::PathBuf::from(&c.watch_directory),
             None => return Ok(()) // add error
         };
 
-        let tree = match self.trees.get_mut(&repo_name) {
-            Some(t) => t,
+        let mut temp_tree_copy = match self.trees.get(&repo_name) {
+            Some(t) => t.clone(),
             None => return Err(anyhow::anyhow!("unable to locate tree for {}", &repo_name))
         };
         if let Some(batch_loader_tx) = &self.batch_loader_tx {
-            Self::search_subdir(std::path::PathBuf::from(&config.watch_directory), tree, &self.app_tx, batch_loader_tx)?;
-
+            if watch_directory.to_string_lossy().is_empty() {
+                return Err(anyhow::anyhow!("watch directory is not saved in the config"))
+            }
+            Self::search_subdir(watch_directory, &mut temp_tree_copy, &self.app_tx, batch_loader_tx)?;
         } else {
             return Err(anyhow::anyhow!("batch loader tx is not available"));
         }
@@ -234,7 +233,6 @@ impl Client {
                     name: repo_name.clone(),
                 };
             self.trees.insert(repo_name.clone(), tree.clone());
-            tree.save_to_file(&tree.path);
         };
         
         let body = json!({
@@ -257,30 +255,15 @@ impl Client {
                     let tree_updates: HashMap<i32, String> =
                         serde_json::from_slice(&response.body)?;
 
-                    let new_version = tree_updates.keys().cloned().max().unwrap_or(0);
-
-                    self.app_tx.send(Commands::Log(
-                        format!(
-                            "Applying history from index {} to {}",
-                            new_version - tree.version,
-                            new_version
-                        )
-                    ))?;
-
-                    self.app_tx.send(Commands::Notify(
-                        format!(
-                            "Applying history from index {} to {}",
-                            new_version - tree.version,
-                            new_version
-                        )
-                    ))?;
+                    let start_index = tree.version;
                     for (_, history_entry) in tree_updates {
                         tree.add_history(history_entry);
                     }
 
-                    tree.apply_history(new_version);
+                    tree.apply_history(start_index);
                     self.trees.insert(repo_name.clone(), tree.clone());
                     tree.save_to_file(&tree.path);
+
                 }
 
                 self.app_tx.send(Commands::PostRepoTree(tree.clone(), repo_name))?;
