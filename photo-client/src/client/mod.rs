@@ -1,7 +1,7 @@
 use std::{sync::mpsc, collections::HashMap, thread::JoinHandle, net::TcpStream, sync::Arc, sync::atomic};
 use shared::{BatchJob, Log, Notify, Request, RequestTypes, Response, ResponseCodes, Tree, read_response, send_request};
 use crate::app::{Commands, ClientConfig, ConnectionStatus};
-use crate::filestreamclient::{BatchLoader, RepoEventListener};
+use crate::filestreamclient::{BatchLoader, BatchLoaderCallback, RepoEventListener};
 
 mod client_repository_managment;
 
@@ -12,13 +12,15 @@ pub struct Client {
     config: ClientConfig,
     command_stream: Option<TcpStream>,
     repo_threads: HashMap<String, (std::thread::JoinHandle<()>,Arc<atomic::AtomicBool>)>,
-    batch_loader_tx: Option<mpsc::Sender<BatchJob>>,
+    batch_loader_job_tx: Option<mpsc::Sender<BatchJob>>,
+    batch_loader_callback_rx: Option<mpsc::Receiver<BatchLoaderCallback>>,
     batch_loader_join_handle: Option<JoinHandle<anyhow::Result<()>>>,
     trees: HashMap<String,Tree>
 }
 
 impl Client {
     pub fn new(app_tx: mpsc::Sender<Commands>,app_rx:mpsc::Receiver<Commands>,stop_flag:Arc<atomic::AtomicBool>, config:ClientConfig) -> Self {
+
         Client {
             app_tx, app_rx,
             stop_flag,
@@ -26,7 +28,8 @@ impl Client {
             command_stream: None,
             repo_threads: HashMap::new(),
             trees: HashMap::new(),
-            batch_loader_tx: None,
+            batch_loader_job_tx: None,
+            batch_loader_callback_rx: None,
             batch_loader_join_handle: None,
         }
     }
@@ -39,7 +42,7 @@ impl Client {
                 }
                 self.command_stream = Some(s);
 
-                // Handle the connection response
+                // Handle the connection response   
                 if let Some(stream) = &mut self.command_stream {
                     let response = read_response(stream)?;
                     self.log_response(&response)?;
@@ -70,10 +73,11 @@ impl Client {
                     
                     let app_tx_clone = self.app_tx.clone();
                     let stop_flag_clone = self.stop_flag.clone();
-                    
-                    let mut batch_loader = BatchLoader::new(file_stream, stop_flag_clone, app_tx_clone);
+                    let (callback_tx, rx) = mpsc::channel::<BatchLoaderCallback>();
+                    self.batch_loader_callback_rx = Some(rx);
+                    let mut batch_loader = BatchLoader::new(file_stream, stop_flag_clone, app_tx_clone, callback_tx);
 
-                    (self.batch_loader_tx, self.batch_loader_join_handle) = match batch_loader.listen() {
+                    (self.batch_loader_job_tx, self.batch_loader_join_handle) = match batch_loader.listen() {
                         Ok((tx, join_handle)) => (Some(tx),Some(join_handle)),
                         Err(_) => (None,None)
                     };
@@ -165,7 +169,7 @@ impl Client {
     }
     
     fn start_event_listener(&mut self, repo_name:String, watch_directory:String, stop_flag: Arc<atomic::AtomicBool>) -> anyhow::Result<JoinHandle<()>> {
-        if let (Some(batch_loader_tx), Some(repo_config)) = (self.batch_loader_tx.clone(), self.config.repo_config.get(&repo_name)) {
+        if let (Some(batch_loader_tx), Some(repo_config)) = (self.batch_loader_job_tx.clone(), self.config.repo_config.get(&repo_name)) {
             let track_modifications = repo_config.track_modifications.clone();
             let repo_name_clone = repo_name.clone();
             let join_handle = std::thread::spawn(move || {
