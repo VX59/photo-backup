@@ -1,7 +1,7 @@
 use super::Client;
 use std::{collections::HashMap, path::PathBuf, sync::{Arc, atomic, mpsc}};
 use shared::{FileHeader, Log, Notify, Request, RequestTypes, ResponseCodes, Tree, Job, BatchJob, read_response, send_request};
-use crate::app::{Commands, ConnectionStatus, RepoConfig};
+use crate::{app::{Commands, ConnectionStatus, RepoConfig}, filestreamclient::BatchLoaderCallback};
 use serde_json::json;
 
 impl Client {
@@ -53,15 +53,21 @@ impl Client {
             let metadata = std::fs::metadata(&file_path)?;
             let file_datetime = metadata.created()?;
             let file_size= metadata.len();
+
             let file_ext = file_path.extension()
                 .and_then(|s| s.to_str())
                 .unwrap_or("unknown")
                 .to_string();   
             
+            let file_location = file_path
+                .to_string_lossy()
+                .into_owned();
+
             let file_header = FileHeader {
                 repo_name: repo_name.to_string(),
                 file_name: file,
                 file_size: file_size as usize,
+                file_location,
                 file_ext,
                 file_datetime,
             };
@@ -89,11 +95,34 @@ impl Client {
             Some(t) => t.clone(),
             None => return Err(anyhow::anyhow!("unable to locate tree for {}", &repo_name))
         };
-        if let Some(batch_loader_tx) = &self.batch_loader_tx {
+        if let Some(batch_loader_tx) = &self.batch_loader_job_tx {
             if watch_directory.to_string_lossy().is_empty() {
                 return Err(anyhow::anyhow!("watch directory is not saved in the config"))
             }
             Self::search_subdir(watch_directory, &mut temp_tree_copy, &self.app_tx, batch_loader_tx)?;
+            
+            if let Some(batch_loader_callback_rx) = &self.batch_loader_callback_rx {
+                let mut stop_flag = false;
+                while !stop_flag {
+                    match batch_loader_callback_rx.try_recv() {
+                        Ok(callback) => {
+                            match callback {
+                                BatchLoaderCallback::Done => {
+                                    stop_flag = true;
+                                },
+                                BatchLoaderCallback::Failed => {},
+                            }
+                        },
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {},
+                        Err(e) => return Err(anyhow::anyhow!(e))
+                    };
+                };
+
+                self.get_repo_tree(repo_name)?;
+            } else {
+                return Err(anyhow::anyhow!("batch loader callback reciever not available"))
+            }
+
         } else {
             return Err(anyhow::anyhow!("batch loader tx is not available"));
         }
@@ -259,13 +288,14 @@ impl Client {
                     for (_, history_entry) in tree_updates {
                         tree.add_history(history_entry);
                     }
-
+                    
+                    println!("applying history from {} to {}", start_index, tree.version);
                     tree.apply_history(start_index);
                     self.trees.insert(repo_name.clone(), tree.clone());
                     tree.save_to_file(&tree.path);
 
                 }
-
+                
                 self.app_tx.send(Commands::PostRepoTree(tree.clone(), repo_name))?;
             }
         }

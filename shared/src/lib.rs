@@ -5,16 +5,17 @@ use bincode::{Decode, Encode};
 use serde::Deserialize;
 use serde::Serialize;
 use anyhow::Result;
+use std::collections::HashMap;
 
 #[derive(Debug, Encode, Decode)]
 pub struct FileHeader {
     pub repo_name: String,
     pub file_name: String,
     pub file_size: usize,
+    pub file_location: String,
     pub file_ext: String,
     pub file_datetime: std::time::SystemTime,
 }
-use std::collections::HashMap;
 
 #[derive(Decode, Encode)]
 pub struct Job {

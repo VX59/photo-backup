@@ -15,7 +15,14 @@ impl App {
                     self.ui.selected_repo = Some(i);
                     let repo_name = repo.to_string();
                     self.ui.file_explorer_path.clear();
-                    self.ui.file_explorer_path.push(repo_name.clone());
+                    
+                    if let Some(repo_config) = self.config.repo_config.get(&repo_name) {
+                        let watch_directory = &repo_config.watch_directory;
+                        if let Some(root) = watch_directory.split('/').last() {
+                            self.ui.file_explorer_path.push(root.to_string());
+                        }
+                    }
+                    
                     if let Some(cli_tx) = &self.cli_tx {
                         cli_tx.send(Commands::GetRepoTree(repo_name.clone())).unwrap();
                     }

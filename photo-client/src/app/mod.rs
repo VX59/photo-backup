@@ -47,8 +47,14 @@ impl App {
                 }
                 Commands::PostRepoTree(tree, repo_name) => {
                     self.ui.tree = Some(tree);
-                    self.app_tx.send(Commands::GetSubDir(repo_name)).ok(); // maybe issue well see
+                    if let Some(repo_config) = self.config.repo_config.get(&repo_name) {
+                        let watch_directory = &repo_config.watch_directory;
+                        if let Some(root) = watch_directory.split('/').last() {
+                            self.app_tx.send(Commands::GetSubDir(root.to_string())).ok(); // maybe issue well see
+                        }
+                    }
                 }
+                
                 Commands::PostRepos(repos) => {       
                     self.ui.selected_repo = None;
                     self.ui.repo_status.clear();             

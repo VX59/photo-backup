@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,io::prelude::*, net::{TcpListener, TcpStream}, path::PathBuf, sync::{Arc, atomic}, thread::JoinHandle
+    collections::HashMap,io::prelude::*, net::{TcpListener, TcpStream}, path::PathBuf, sync::{Arc, atomic, mpsc}, thread::JoinHandle
 };
 use shared::{send_response, Response, Tree, FileHeader, Job};
 
@@ -28,6 +28,7 @@ pub fn initiate_batch_processor(storage_directory: PathBuf, listener:TcpListener
         Err(e) => return Err(anyhow::anyhow!(e)),
     }
 }
+
 
 struct BatchProcessor {
     storage_directory: PathBuf,
@@ -122,12 +123,12 @@ impl BatchProcessor {
             }
             
             if let Some(tree) = self.trees.get_mut(&file_header.repo_name) {
-                let start_index = tree.add_history( format!("+{}", file_path.to_str().unwrap().to_string()));
+                let start_index = tree.add_history( format!("+{}", file_header.file_location.to_string()));
                 tree.apply_history(start_index);
                 tree.save_to_file(&tree.path);
             }
 
-            println!("Receiving file: {} ({} bytes)", file_path.to_str().unwrap().to_string(), file_header.file_size);
+            println!("Receiving file: {} ({} bytes)", file_path.to_string_lossy().into_owned(), file_header.file_size);
 
             if let Some(parent) = file_path.parent() {
                 std::fs::create_dir_all(parent)?;

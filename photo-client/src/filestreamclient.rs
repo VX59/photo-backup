@@ -14,23 +14,30 @@ pub struct RepoEventListener {
     track_modifications:bool,
 }
 
+pub enum BatchLoaderCallback {
+    Done,
+    Failed,
+}
+
 
 pub struct BatchLoader {
     stream:Option<TcpStream>, // communicates with the server
     stop_flag: Option<Arc<atomic::AtomicBool>>,
     rx: Option<mpsc::Receiver<BatchJob>>,
     pub tx: mpsc::Sender<BatchJob>,
+    pub callback_tx:Option<mpsc::Sender<BatchLoaderCallback>>,
     pub app_tx:Option<mpsc::Sender<Commands>>,
 }
 
 impl BatchLoader {
-    pub fn new(stream:TcpStream, stop_flag: Arc<atomic::AtomicBool>, app_tx:mpsc::Sender<Commands>) -> Self {
+    pub fn new(stream:TcpStream, stop_flag: Arc<atomic::AtomicBool>, app_tx:mpsc::Sender<Commands>, callback_tx:mpsc::Sender<BatchLoaderCallback>) -> Self {
         let (tx, rx) = mpsc::channel::<BatchJob>();
-        BatchLoader { 
+
+        BatchLoader {
             stream: Some(stream),
             stop_flag: Some(stop_flag),
-            rx: Some(rx)
-            ,tx,
+            rx: Some(rx),tx,
+            callback_tx: Some(callback_tx),
             app_tx: Some(app_tx),
         }
     }
@@ -45,6 +52,8 @@ impl BatchLoader {
         let stop_flag = self.stop_flag.take().expect("stop flag not given");
         let mut stream = self.stream.take().expect("stream not given");
         let app_tx = self.app_tx.take().expect("app tx not given");
+        let callback_tx = self.callback_tx.take().expect("callback tx not given");
+
         let join_handle:JoinHandle<anyhow::Result<()>> = std::thread::spawn(move || {
             while !stop_flag.load(atomic::Ordering::Relaxed) {
                 match rx.try_recv() {
@@ -76,10 +85,15 @@ impl BatchLoader {
                         let response_message: std::borrow::Cow<'_, str> = String::from_utf8_lossy(&response.body);
                         app_tx.send(Commands::Notify(format!("{}", response_message)))?;
                         app_tx.send(Commands::Log(format!("{} | [ {} ]", response.status_code, response_message)))?;
+                        
+                        callback_tx.send(BatchLoaderCallback::Done)?;
 
                     }
                     Err(std::sync::mpsc::TryRecvError::Empty) => {},
-                    Err(e) => return Err(anyhow::anyhow!(e))
+                    Err(e) => {
+                        callback_tx.send(BatchLoaderCallback::Failed)?;
+                        return Err(anyhow::anyhow!(e))
+                    }
                 }
             }
 
@@ -87,7 +101,6 @@ impl BatchLoader {
             let message = "Streaming client stopped.".to_string();
             app_tx.send(Commands::Log(message.clone()))?;
             app_tx.send(Commands::Notify(message.clone()))?;
-
             Ok(())
         });
 
@@ -217,11 +230,15 @@ impl RepoEventListener {
         println!("local path {}\n", local_path.clone().to_string_lossy());
 
         let file_bytes: Vec<u8> = std::fs::read(local_path.clone())?;
+        let file_location = local_path
+            .to_string_lossy()
+            .into_owned();
 
         let file_header = FileHeader {
             repo_name: repo_name,
             file_name: file_name.to_string(), 
             file_size: file_bytes.len() as usize,
+            file_location: file_location,
             file_ext: file_ext.to_string(),
             file_datetime: file_datetime,
         };
